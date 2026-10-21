@@ -1,0 +1,4724 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "fncompress",
+    "description": "飞牛 NAS 视频压缩服务。错误统一为 `{ error: { code, message, details } }`；进度通过 SSE `/api/events` 推送。",
+    "license": {
+      "name": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+      "identifier": "LicenseRef-PolyForm-Noncommercial-1.0.0"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/attempts": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "尝试记录, newest first. A recorded file is not retried automatically with\nthe same profile.",
+        "operationId": "list_attempts",
+        "parameters": [
+          {
+            "name": "path_prefix",
+            "in": "query",
+            "description": "Only attempts on files under this directory.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Default 100, at most 1000.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attempts/{id}": {
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Forgets an attempt: the monitor may try the file again.",
+        "operationId": "delete_attempt",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "尝试记录 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Server-sent events. Each SSE `event:` name equals the payload's `event`\nfield (see the `Event` schema): `task_created`, `task_updated`,\n`task_deleted`, `task_progress`, `config_changed`, `monitor_status`,\n`space_status`.\n`ready` is sent first; `lagged` means events were dropped and the client\nshould reload what it shows.",
+        "description": "`X-Accel-Buffering: no` stops nginx in front (the fnOS gateway, ADR\n0012, buffers proxied responses by default) from holding events back.",
+        "operationId": "events",
+        "responses": {
+          "200": {
+            "description": "事件流",
+            "content": {
+              "text/event-stream": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/fs": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Subdirectories and video files of a directory, for picking paths in the\nweb UI. Hidden entries, `@` directories and `#recycle` are left out.",
+        "operationId": "list_dir",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Directory to list; the roots (directories authorized in fnOS, then\nthe volumes `/vol*` the service can read) when absent. The roots can\nbe empty: nothing authorized and no readable volume.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Listing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "不是目录、不存在或没有权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/monitors": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "list_monitors",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitorList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "create_monitor",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MonitorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitorDir"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/monitors/scan": {
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Starts an incremental full scan of every enabled monitored directory now.",
+        "operationId": "scan_monitors",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitorStatus"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "自动监控已关闭",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/monitors/{id}": {
+      "put": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "put_monitor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "监控目录 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MonitorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitorDir"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "delete_monitor",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "监控目录 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profiles": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "list_profiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "create_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedProfile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profiles/{id}": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "get_profile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "方案 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedProfile"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Queued tasks keep the snapshot they were queued with.",
+        "operationId": "put_profile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "方案 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "delete_profile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "方案 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "默认方案或有监控目录在用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/recycle": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Replaced sources in every recycle directory the server has used.",
+        "operationId": "list_recycle",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecycleList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/recycle/empty": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "一键清空: deletes every entry of every recycle directory.",
+        "operationId": "empty_recycle",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Emptied"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "operationId": "get_settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Replaces `global` and/or `server`. New tasks use the new values at once;\nslot changes apply as running tasks finish.",
+        "operationId": "put_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/observation/reset": {
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Starts the observation mode over: the next `observe_first_n` files go to review.",
+        "operationId": "reset_observation",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/risk/acknowledge": {
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "summary": "The user confirmed the risk notice; the UI stops showing it.",
+        "operationId": "acknowledge_risk",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "system",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/System"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "List tasks, newest first.",
+        "operationId": "list_tasks",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Comma-separated states, e.g. `queued,running`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskSource"
+            }
+          },
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Only tasks with a smaller id (paging, newest first).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Default 100, at most 500.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "create_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTask"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "路径无效、来源不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置方案不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "已有任务（task_exists）、已处理过（already_processed，需要 force）或评分工具不可用（scoring_unavailable）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/preview": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "What a transcode of this file would do: route, expected losses,\nprotective skip, earlier attempts. Nothing is queued.",
+        "operationId": "preview_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preview"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/preview-batch": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "What a folder batch would queue and which files it would skip, and why.\nNothing is queued.",
+        "operationId": "preview_batch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "get_task",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "任务 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Removes a finished task from the list (not queued, running or pending).",
+        "operationId": "delete_task",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "任务 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/cancel": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Cancels a queued task at once, or stops a running one (its state turns\n`cancelled` when FFmpeg has exited; watch `task_updated`).",
+        "operationId": "cancel_task",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "任务 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/choose": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Saves a candidate of a recommendation awaiting a choice as a new profile,\nand optionally queues a transcode of the source with it. A transcode that\ncannot be queued is reported in `transcode_error`; the profile stays.",
+        "operationId": "choose_candidate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "任务 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChooseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChooseResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "不在待选择状态，或方案 id 已存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/discard": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Deletes the pending output; the source stays. For a recommendation\nawaiting a choice: ends it without choosing.",
+        "operationId": "discard_task",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "任务 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/release": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "人工放行: publishes the pending output; the source goes to the recycle.",
+        "operationId": "release_task",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "任务 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "没有待确认成品、收益不足或发布失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/retry": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Queues the same file again with the profile as it is now. Attempt\nrecords do not stop a manual retry.",
+        "operationId": "retry_task",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "任务 id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/verify-stats": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "How often each check fired across all verification reports on record;\nthe data for calibrating thresholds after the observation mode.",
+        "operationId": "verify_stats",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AppError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "Attempt": {
+        "type": "object",
+        "description": "尝试记录: a failed attempt on one file with one profile (ADR 0005). The\nsame file with the same fingerprint is not retried automatically.",
+        "required": [
+          "id",
+          "identity",
+          "fingerprint",
+          "path",
+          "kind",
+          "message",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Skip code, for protective skips."
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/FileIdentity"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttemptKind"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "Path at the time; informational, the identity is the key."
+          },
+          "task_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "AttemptKind": {
+        "type": "string",
+        "enum": [
+          "skipped",
+          "rejected",
+          "insufficient_savings"
+        ]
+      },
+      "AttemptList": {
+        "type": "object",
+        "required": [
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attempt"
+            }
+          }
+        }
+      },
+      "AutoMethod": {
+        "type": "string",
+        "description": "How auto samples are picked from the source.",
+        "enum": [
+          "bitrate",
+          "scene"
+        ]
+      },
+      "BatchPreview": {
+        "type": "object",
+        "description": "What a folder batch would queue, for the \"new transcode\" form.",
+        "required": [
+          "dir",
+          "profile_id",
+          "files",
+          "skipped",
+          "space"
+        ],
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files that would be queued, sorted."
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedFile"
+            },
+            "description": "Files that would not, and why."
+          },
+          "space": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VolumeEstimate"
+            },
+            "description": "Free space each volume of `files` would need, worst case, with the\ntranscodes already queued or running there. A short volume does not\nstop the batch: its tasks wait in the queue until space is freed."
+          }
+        }
+      },
+      "BatchRequest": {
+        "type": "object",
+        "description": "A folder batch (`source: folder_batch`).",
+        "required": [
+          "dir"
+        ],
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "include_attempted": {
+            "type": "boolean",
+            "description": "Also queue files with an attempt record for this profile."
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recursive": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Candidate": {
+        "type": "object",
+        "description": "A verified (or rejected) candidate next to its source.",
+        "required": [
+          "source",
+          "path",
+          "target",
+          "source_identity",
+          "identity",
+          "savings",
+          "report",
+          "plan"
+        ],
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/FileIdentity"
+          },
+          "path": {
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/RoutePlan"
+          },
+          "report": {
+            "$ref": "#/components/schemas/Report"
+          },
+          "savings": {
+            "$ref": "#/components/schemas/Savings"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_identity": {
+            "$ref": "#/components/schemas/FileIdentity",
+            "description": "Identities when verification finished; publication refuses if either\nfile changed since."
+          },
+          "target": {
+            "type": "string",
+            "description": "Where publication puts it."
+          }
+        }
+      },
+      "CheckCount": {
+        "type": "object",
+        "required": [
+          "check",
+          "severity",
+          "count"
+        ],
+        "properties": {
+          "check": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        }
+      },
+      "ChooseRequest": {
+        "type": "object",
+        "description": "Saves a recommended candidate as a profile.",
+        "required": [
+          "quality"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New profile name; \"推荐：<file> 预设 <p> 质量 <q>\" by default."
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preset of the candidate; `None` for an encoder without presets."
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New profile id; `rec-<task>-<preset>-q<quality>` by default\n(`rec-<task>-q<quality>` without a preset)."
+          },
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quality value of the candidate.",
+            "minimum": 0
+          },
+          "transcode": {
+            "type": "boolean",
+            "description": "Also queue a transcode of the source with the new profile."
+          }
+        }
+      },
+      "ChooseResult": {
+        "type": "object",
+        "required": [
+          "task",
+          "profile"
+        ],
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/SavedProfile"
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "transcode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Task",
+                "description": "The transcode queued with the new profile."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transcode_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the transcode was not queued (the profile is saved regardless)."
+          }
+        }
+      },
+      "Container": {
+        "type": "string",
+        "enum": [
+          "mkv",
+          "mp4"
+        ]
+      },
+      "ContainerChoice": {
+        "type": "string",
+        "description": "Output container choice of a profile.",
+        "enum": [
+          "keep",
+          "mkv",
+          "mp4"
+        ]
+      },
+      "CreateTask": {
+        "type": "object",
+        "description": "A new task. `source: manual` takes `path`; `source: folder_batch` takes\n`dir` and queues every video under it that passes screening.\n`type: recommend` (样片推荐) takes `path`, the profile to start from and\n`recommend`; it is always manual.",
+        "properties": {
+          "dir": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Process files that already carry the processed marker."
+          },
+          "include_attempted": {
+            "type": "boolean",
+            "description": "Folder batch: also queue files with an attempt record for this profile."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Saved profile; the server's default profile when absent."
+          },
+          "recommend": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecommendRequest",
+                "description": "样片推荐: target and samples (defaults: VMAF 95, 4 auto samples of 10 s\npicked by bitrate)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Folder batch: include subdirectories (default true)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/TaskSource"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TaskKind"
+          }
+        }
+      },
+      "Created": {
+        "type": "object",
+        "required": [
+          "tasks",
+          "skipped"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Folder batches only."
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedFile"
+            },
+            "description": "Files of a folder batch that were not queued."
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          }
+        }
+      },
+      "DecodeResult": {
+        "type": "object",
+        "required": [
+          "hardware",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Decoder errors; empty means the whole video decoded cleanly."
+          },
+          "hardware": {
+            "type": "boolean",
+            "description": "Whether the deciding decode ran on the GPU."
+          }
+        }
+      },
+      "DirEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "DoviConfig": {
+        "type": "object",
+        "description": "Dolby Vision decoder configuration record (dvcC/dvvC box, Matroska\nBlockAdditionMapping).",
+        "required": [
+          "profile",
+          "level",
+          "rpu_present",
+          "el_present",
+          "bl_present",
+          "bl_compat_id"
+        ],
+        "properties": {
+          "bl_compat_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "bl_present": {
+            "type": "boolean"
+          },
+          "el_present": {
+            "type": "boolean"
+          },
+          "level": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "md_compression": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Metadata compression: 0 none, 1 limited, 2 reserved, 3 extended.",
+            "minimum": 0
+          },
+          "profile": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rpu_present": {
+            "type": "boolean"
+          },
+          "version_major": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "version_minor": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DoviStatus": {
+        "type": "object",
+        "description": "Whether Dolby Vision routes can run: dovi_tool (ADR 0011) runs.",
+        "required": [
+          "path",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it is not available."
+          },
+          "path": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Emptied": {
+        "type": "object",
+        "required": [
+          "removed"
+        ],
+        "properties": {
+          "removed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecycleEntry"
+            }
+          }
+        }
+      },
+      "Encoder": {
+        "type": "string",
+        "description": "Video encoders fncompress can drive. AV1 variants are only offered when the\nstartup probe proves they actually encode on this machine.",
+        "enum": [
+          "libx264",
+          "libx265",
+          "h264_qsv",
+          "hevc_qsv",
+          "h264_vaapi",
+          "hevc_vaapi",
+          "av1_qsv",
+          "av1_vaapi",
+          "libsvtav1"
+        ]
+      },
+      "EncoderProbe": {
+        "type": "object",
+        "required": [
+          "encoder",
+          "available",
+          "packets"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "encoder": {
+            "$ref": "#/components/schemas/Encoder"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the encoder is unavailable (last lines of FFmpeg's stderr)."
+          },
+          "packets": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "`{ \"error\": { ... } }`",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/AppError"
+          }
+        }
+      },
+      "Event": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "task",
+              "event"
+            ],
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "task_created"
+                ]
+              },
+              "task": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "State or result changed.",
+            "required": [
+              "task",
+              "event"
+            ],
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "task_updated"
+                ]
+              },
+              "task": {
+                "$ref": "#/components/schemas/Task"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "event"
+            ],
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "task_deleted"
+                ]
+              },
+              "id": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskProgress",
+                "description": "Encode progress, at most once a second per task."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "event"
+                ],
+                "properties": {
+                  "event": {
+                    "type": "string",
+                    "enum": [
+                      "task_progress"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "Encode progress, at most once a second per task."
+          },
+          {
+            "type": "object",
+            "description": "Settings, profiles or monitored directories changed.",
+            "required": [
+              "section",
+              "event"
+            ],
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "config_changed"
+                ]
+              },
+              "section": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "status",
+              "event"
+            ],
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "monitor_status"
+                ]
+              },
+              "status": {
+                "$ref": "#/components/schemas/MonitorStatus"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Which queued transcodes wait for free space changed.",
+            "required": [
+              "status",
+              "event"
+            ],
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "space_status"
+                ]
+              },
+              "status": {
+                "$ref": "#/components/schemas/SpaceStatus"
+              }
+            }
+          }
+        ]
+      },
+      "ExpectedLoss": {
+        "type": "object",
+        "description": "A track property the target container cannot store (换封装预期丢失).\nVerification compares track properties against the source minus these.",
+        "required": [
+          "stream",
+          "property",
+          "reason"
+        ],
+        "properties": {
+          "property": {
+            "type": "string",
+            "description": "`disposition:<flag>`."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "FileEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "size",
+          "mtime"
+        ],
+        "properties": {
+          "mtime": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "FileIdentity": {
+        "type": "object",
+        "required": [
+          "dev",
+          "ino",
+          "size",
+          "mtime_ns"
+        ],
+        "properties": {
+          "dev": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ino": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mtime_ns": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Modification time in nanoseconds since the Unix epoch."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "Finding": {
+        "type": "object",
+        "required": [
+          "check",
+          "severity",
+          "message"
+        ],
+        "properties": {
+          "check": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        }
+      },
+      "GlobalSettings": {
+        "type": "object",
+        "properties": {
+          "dovi_tool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "dovi_tool for Dolby Vision routes (ADR 0011); `None` looks next to\n`scoring_ffmpeg` (the scoring runtime ships one), then on `PATH`.",
+            "default": null
+          },
+          "encode_timeout_factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Encode timeout = source duration x factor + 30 minutes.",
+            "default": 30.0
+          },
+          "ffmpeg": {
+            "type": "string",
+            "default": "ffmpeg"
+          },
+          "ffprobe": {
+            "type": "string",
+            "default": "ffprobe"
+          },
+          "hw_decode": {
+            "type": "boolean",
+            "description": "QSV and VAAPI transcodes decode the source on the GPU first; a\nfailed or erroring run is redone with software decoding.",
+            "default": true
+          },
+          "min_savings_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "Below this saving the candidate is \"insufficient gain\" (收益不足).",
+            "default": 5.0
+          },
+          "pending_retention_days": {
+            "type": "integer",
+            "format": "int32",
+            "default": 14,
+            "minimum": 0
+          },
+          "recycle_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None`: `.fncompress-recycle` next to each source, which keeps the\nrecycle on the source's filesystem.",
+            "default": null
+          },
+          "recycle_retention_days": {
+            "type": "integer",
+            "format": "int32",
+            "default": 14,
+            "minimum": 0
+          },
+          "render_device": {
+            "type": "string",
+            "description": "Render node for QSV and VAAPI.",
+            "default": "/dev/dri/renderD128"
+          },
+          "scoring_ffmpeg": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "FFmpeg with libvmaf for 样片推荐 scoring (the scoring runtime, ADR\n0006); `None` uses `ffmpeg`. Libraries next to it are put on the\nlibrary path.",
+            "default": null
+          },
+          "verify": {
+            "$ref": "#/components/schemas/VerifyThresholds",
+            "default": {
+              "av_offset_hard_ms": 45.0,
+              "av_offset_soft_ms": 15.0,
+              "copied_stream_hash": false,
+              "decode_check": true,
+              "end_hard_ms": 1000.0,
+              "end_soft_ms": 50.0,
+              "hw_decode": true,
+              "spot_check_secs": 2.0,
+              "spot_checks": 8,
+              "ssim_hard": 0.8,
+              "ssim_soft": 0.9
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Inspection": {
+        "type": "object",
+        "description": "Results of the checks that need FFmpeg; `None` means not run.",
+        "required": [
+          "errors"
+        ],
+        "properties": {
+          "decode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecodeResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decoded_frames": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "description": "Decoded video frames (source, candidate); only counted when the\npacket counts differ."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "(check, why) for checks that could not run."
+          },
+          "hdr10_plus": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RpuCheck",
+                "description": "HDR10+ routes: the candidate's HDR10+ messages against the source's."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rpu": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RpuCheck",
+                "description": "Dolby Vision routes: the candidate's RPUs against the source's."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spot_checks": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SpotCheck"
+            }
+          },
+          "stream_hashes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/StreamHash"
+            }
+          }
+        }
+      },
+      "LeadInTrim": {
+        "type": "object",
+        "description": "A copied stream whose hidden lead-in is cut down: Matroska has no edit\nlist, so the packets an MP4 hides before the first shown one would play.\nThe first `packets` are dropped; the last hidden one stays, so the first\nshown audio frame still decodes from its predecessor (ADR 0012).",
+        "required": [
+          "stream",
+          "packets"
+        ],
+        "properties": {
+          "packets": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "stream": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "Listing": {
+        "type": "object",
+        "required": [
+          "path",
+          "dirs",
+          "files",
+          "truncated"
+        ],
+        "properties": {
+          "dirs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DirEntry"
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileEntry"
+            },
+            "description": "Video files only."
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where \"up\" goes; none at a root."
+          },
+          "path": {
+            "type": "string",
+            "description": "The listed directory; empty for the list of roots."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The directory has more than [`MAX_ENTRIES`] entries."
+          }
+        }
+      },
+      "MonitorDir": {
+        "type": "object",
+        "description": "监控目录.",
+        "required": [
+          "id",
+          "path",
+          "enabled",
+          "profile_id",
+          "recursive",
+          "excludes"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "excludes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Glob patterns relative to the monitored directory, e.g. `**/Extras/**`."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "path": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Include subdirectories."
+          }
+        }
+      },
+      "MonitorInput": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "excludes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "path": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The server's default profile when absent."
+          },
+          "recursive": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MonitorList": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "monitors",
+          "status"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch (`server.monitor_enabled`)."
+          },
+          "monitors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MonitorDir"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/MonitorStatus",
+            "description": "Watches, scans and files waiting to settle."
+          }
+        }
+      },
+      "MonitorStatus": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "dirs",
+          "scanning",
+          "settling",
+          "queued",
+          "space_paused"
+        ],
+        "properties": {
+          "dirs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WatchState"
+            }
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch."
+          },
+          "last_scan_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds of the last finished full scan."
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files queued by the monitor since the server started.",
+            "minimum": 0
+          },
+          "scanning": {
+            "type": "boolean"
+          },
+          "settling": {
+            "type": "integer",
+            "description": "Files waiting to settle.",
+            "minimum": 0
+          },
+          "space_paused": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpaceShortage"
+            },
+            "description": "Volumes where monitoring is paused because the files found there\nwould not fit; it resumes by itself once space is freed."
+          }
+        }
+      },
+      "Outcome": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Protective skip (保护性跳过): nothing was encoded.",
+            "required": [
+              "reason",
+              "outcome"
+            ],
+            "properties": {
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "skipped"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/SkipReason"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A hard check failed: the candidate awaits manual release (待确认成品).",
+            "required": [
+              "candidate",
+              "outcome"
+            ],
+            "properties": {
+              "candidate": {
+                "$ref": "#/components/schemas/Candidate"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "rejected"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Saved less than the threshold (收益不足); the source stays.",
+            "required": [
+              "savings",
+              "min_savings_pct",
+              "report",
+              "outcome"
+            ],
+            "properties": {
+              "min_savings_pct": {
+                "type": "number",
+                "format": "double"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "insufficient_savings"
+                ]
+              },
+              "report": {
+                "$ref": "#/components/schemas/Report"
+              },
+              "savings": {
+                "$ref": "#/components/schemas/Savings"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Passed, not published (publication was not requested).",
+            "required": [
+              "candidate",
+              "outcome"
+            ],
+            "properties": {
+              "candidate": {
+                "$ref": "#/components/schemas/Candidate"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "verified"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "published",
+              "savings",
+              "report",
+              "outcome"
+            ],
+            "properties": {
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "published"
+                ]
+              },
+              "published": {
+                "$ref": "#/components/schemas/Published"
+              },
+              "report": {
+                "$ref": "#/components/schemas/Report"
+              },
+              "savings": {
+                "$ref": "#/components/schemas/Savings"
+              }
+            }
+          }
+        ]
+      },
+      "PendingReason": {
+        "type": "string",
+        "description": "Why a pending output is pending.",
+        "enum": [
+          "rejected",
+          "observation"
+        ]
+      },
+      "PresetResult": {
+        "type": "object",
+        "description": "How one compared preset did.",
+        "required": [
+          "done",
+          "trials",
+          "over_timeout",
+          "front"
+        ],
+        "properties": {
+          "best": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecommendCandidate",
+                "description": "Its cheapest candidate."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "done": {
+            "type": "boolean",
+            "description": "Its quality search has ended."
+          },
+          "front": {
+            "type": "boolean",
+            "description": "No other preset's cheapest candidate is at least as fast and at\nleast as small, and better in one (the Pareto front)."
+          },
+          "full_secs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Encode time of the whole source at that speed, seconds."
+          },
+          "over_timeout": {
+            "type": "boolean",
+            "description": "`full_secs` is beyond the transcode's encode timeout."
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` for an encoder without presets (VAAPI)."
+          },
+          "speed": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Sample video seconds encoded per second (times real time), over all\nits trials. Other work on the machine at the time slows it down too."
+          },
+          "trials": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "Preview": {
+        "type": "object",
+        "description": "What a transcode of this file would do, for the \"new transcode\" form.",
+        "required": [
+          "path",
+          "identity",
+          "profile_id",
+          "fingerprint",
+          "attempts"
+        ],
+        "properties": {
+          "active_task": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A queued, running or pending task for this path."
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attempt"
+            },
+            "description": "Earlier failed attempts on this file, any profile."
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/FileIdentity"
+          },
+          "marker": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProcessedMarker"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RoutePlan",
+                "description": "The route, including expected losses and warnings."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "skip": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkipReason",
+                "description": "Protective skip, when the route refuses."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "space": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VolumeEstimate",
+                "description": "Free space the file's volume would need, worst case, with the\ntranscodes already queued or running there; absent when the volume\ncannot be told. When short, the task would wait in the queue."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PreviewRequest": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "force": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProcessedMarker": {
+        "type": "object",
+        "required": [
+          "version",
+          "profile"
+        ],
+        "properties": {
+          "profile": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "description": "Encoding profile (编码方案).",
+        "properties": {
+          "container": {
+            "$ref": "#/components/schemas/ContainerChoice",
+            "default": "keep"
+          },
+          "encoder": {
+            "$ref": "#/components/schemas/Encoder",
+            "default": "libx265"
+          },
+          "id": {
+            "type": "string",
+            "description": "Written into the processed marker.",
+            "default": "default"
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Encoder preset; `None` uses the encoder's default from [`Profile::preset_or_default`].",
+            "default": null
+          },
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "CRF for x264/x265/SVT-AV1, `global_quality` for QSV, QP for VAAPI.",
+            "default": 24,
+            "minimum": 0
+          },
+          "resize": {
+            "$ref": "#/components/schemas/Resize",
+            "default": "keep"
+          },
+          "threads": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Encoder thread limit; `None` lets FFmpeg decide. Does not affect output.",
+            "default": null,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfileList": {
+        "type": "object",
+        "required": [
+          "profiles"
+        ],
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedProfile"
+            }
+          }
+        }
+      },
+      "ProfileUpdate": {
+        "type": "object",
+        "required": [
+          "name",
+          "profile"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          }
+        }
+      },
+      "Published": {
+        "type": "object",
+        "required": [
+          "target",
+          "recycled"
+        ],
+        "properties": {
+          "recycled": {
+            "$ref": "#/components/schemas/RecycleEntry"
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
+      "Quota": {
+        "type": "string",
+        "description": "Which concurrency quota a job consumes.",
+        "enum": [
+          "gpu",
+          "cpu"
+        ]
+      },
+      "RangeRoute": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sdr"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "hdr10"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "HDR10 with HDR10+ dynamic metadata on every frame.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "hdr10_plus"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "hlg"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "source",
+              "output",
+              "kind"
+            ],
+            "properties": {
+              "hdr10_plus": {
+                "type": "boolean",
+                "description": "The source also carries HDR10+, which is kept too."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dolby_vision"
+                ]
+              },
+              "output": {
+                "$ref": "#/components/schemas/DoviConfig",
+                "description": "What the candidate carries: the source's configuration, or P8.1\nfor a P7 source (enhancement layer dropped)."
+              },
+              "source": {
+                "$ref": "#/components/schemas/DoviConfig"
+              }
+            }
+          }
+        ],
+        "description": "How the plan carries the source's dynamic range (显示元数据). HDR routes\nencode 10-bit, state the color description and keep the static metadata\nthe decoder attaches to every frame; Dolby Vision routes also carry the\nRPU over (see [`crate::dovi`]), HDR10+ routes each frame's HDR10+ message\n(see [`crate::hdr10plus`]). Verification checks all of it."
+      },
+      "RecommendCandidate": {
+        "type": "object",
+        "description": "A trial that reached the target and is not beaten by a smaller one with\na better score.",
+        "required": [
+          "quality",
+          "min_score",
+          "scores",
+          "video_bytes",
+          "size_ratio",
+          "bitrate_bps"
+        ],
+        "properties": {
+          "bitrate_bps": {
+            "type": "number",
+            "format": "double"
+          },
+          "min_score": {
+            "type": "number",
+            "format": "double",
+            "description": "最低样片分."
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` for an encoder without presets (VAAPI)."
+          },
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "scores": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "size_ratio": {
+            "type": "number",
+            "format": "double"
+          },
+          "video_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "RecommendChoice": {
+        "type": "object",
+        "description": "The candidate a recommendation ended with.",
+        "required": [
+          "quality",
+          "profile_id"
+        ],
+        "properties": {
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile_id": {
+            "type": "string",
+            "description": "The saved profile."
+          },
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "transcode_task": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Transcode of the source queued with it, if asked for."
+          }
+        }
+      },
+      "RecommendProgress": {
+        "type": "object",
+        "required": [
+          "stage",
+          "trial",
+          "sample",
+          "samples",
+          "percent"
+        ],
+        "properties": {
+          "percent": {
+            "type": "number",
+            "format": "double",
+            "description": "Rough overall progress: the number of trials is not known up front."
+          },
+          "preset": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based index into the recommendation's `presets`; 0 before the\nfirst trial.",
+            "minimum": 0
+          },
+          "presets": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "quality": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "sample": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based sample being worked on; 0 when not per sample.",
+            "minimum": 0
+          },
+          "samples": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "stage": {
+            "$ref": "#/components/schemas/RecommendStage"
+          },
+          "trial": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based trial number over all presets; 0 before the first trial.",
+            "minimum": 0
+          }
+        }
+      },
+      "RecommendRequest": {
+        "type": "object",
+        "description": "What the user asks for; the profile comes with the settings snapshot.",
+        "properties": {
+          "presets": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Presets to compare, each with its own quality search. `None`: the\nencoder's usual spread ([`Encoder::compared_presets`]) and the base\nprofile's own preset. Encoders without presets (VAAPI) take none."
+          },
+          "samples": {
+            "$ref": "#/components/schemas/SampleSpec"
+          },
+          "target_vmaf": {
+            "type": "number",
+            "format": "double",
+            "description": "Every sample's mean VMAF must reach this (default 95)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecommendStage": {
+        "type": "string",
+        "enum": [
+          "analyzing",
+          "sampling",
+          "encoding",
+          "scoring"
+        ]
+      },
+      "Recommendation": {
+        "type": "object",
+        "required": [
+          "target_vmaf",
+          "encoder",
+          "width",
+          "height",
+          "model",
+          "range",
+          "samples",
+          "trials",
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecommendCandidate"
+            },
+            "description": "Per preset, in the order of `presets`: cheapest first, at most three."
+          },
+          "encoder": {
+            "$ref": "#/components/schemas/Encoder"
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "description": "VMAF model, e.g. `vmaf_v0.6.1`."
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only on recommendations from before presets were compared: the one\npreset searched. Each trial and candidate names its preset now."
+          },
+          "presets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresetResult"
+            },
+            "description": "The compared presets in the order they run, fastest first."
+          },
+          "range": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Quality values searched, inclusive; larger is smaller output."
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sample"
+            }
+          },
+          "scoring": {
+            "$ref": "#/components/schemas/Scoring",
+            "description": "Recommendations stored before M5 scored SDR directly."
+          },
+          "target_vmaf": {
+            "type": "number",
+            "format": "double"
+          },
+          "trials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Trial"
+            },
+            "description": "Preset by preset, in the order they ran."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Output picture size, where VMAF is measured.",
+            "minimum": 0
+          }
+        }
+      },
+      "RecycleDir": {
+        "type": "object",
+        "required": [
+          "dir",
+          "entries"
+        ],
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecycleEntry"
+            }
+          }
+        }
+      },
+      "RecycleEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "original_path",
+          "file",
+          "identity",
+          "recycled_at",
+          "replaced_by"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "Where the file lives now."
+          },
+          "id": {
+            "type": "string",
+            "description": "Directory name inside the recycle directory."
+          },
+          "identity": {
+            "$ref": "#/components/schemas/FileIdentity"
+          },
+          "original_path": {
+            "type": "string"
+          },
+          "recycled_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds.",
+            "minimum": 0
+          },
+          "replaced_by": {
+            "type": "string",
+            "description": "The file that replaced it."
+          }
+        }
+      },
+      "RecycleList": {
+        "type": "object",
+        "required": [
+          "dirs"
+        ],
+        "properties": {
+          "dirs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecycleDir"
+            }
+          }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "required": [
+          "verdict",
+          "findings",
+          "inspection"
+        ],
+        "properties": {
+          "container_duration_delta_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Also recorded as a `container_duration` info finding."
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "inspection": {
+            "$ref": "#/components/schemas/Inspection",
+            "description": "Raw results of the FFmpeg-based checks."
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
+          }
+        }
+      },
+      "Resize": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "keep"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "Scale down (never up) to this height, keeping the aspect ratio.",
+            "required": [
+              "max_height"
+            ],
+            "properties": {
+              "max_height": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Scale down (never up) to this height, keeping the aspect ratio.",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
+      "RoutePlan": {
+        "type": "object",
+        "required": [
+          "encoder",
+          "video_index",
+          "container",
+          "target",
+          "pix_fmt",
+          "full_range",
+          "width",
+          "height",
+          "container_changed",
+          "expected_losses",
+          "warnings"
+        ],
+        "properties": {
+          "chapter_tracks": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "QuickTime chapter tracks left out of the mapping; their chapters are\ncarried as container chapters. Always the last streams."
+          },
+          "container": {
+            "$ref": "#/components/schemas/Container"
+          },
+          "container_changed": {
+            "type": "boolean",
+            "description": "The container changes (MKV <-> MP4, or TS etc. into either)."
+          },
+          "dynamic_range": {
+            "$ref": "#/components/schemas/RangeRoute",
+            "description": "Plans stored before M5 are SDR."
+          },
+          "encoder": {
+            "$ref": "#/components/schemas/Encoder"
+          },
+          "expected_losses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpectedLoss"
+            },
+            "description": "Track properties the target container cannot store."
+          },
+          "full_range": {
+            "type": "boolean"
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "lead_in_trims": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeadInTrim"
+            },
+            "description": "Hidden lead-ins the output cannot hide; plans stored before M6 have none."
+          },
+          "pix_fmt": {
+            "type": "string",
+            "description": "Software pixel format the encoder is fed."
+          },
+          "target": {
+            "type": "string",
+            "description": "Where publication puts the result: the source path, or the source\npath with the new extension when the container changes."
+          },
+          "video_index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Stream index of the video that is re-encoded; everything else is copied.",
+            "minimum": 0
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Things the user should know that do not stop the transcode."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Output picture size; differs from the source only when downscaling.",
+            "minimum": 0
+          }
+        }
+      },
+      "RpuCheck": {
+        "type": "object",
+        "description": "Per-frame metadata extracted from the candidate, compared with what was\ninjected, in display order: RPUs (the source's, converted to P8.1 for\nP7) or HDR10+ messages. `found` counts the frames that carry one.",
+        "required": [
+          "expected",
+          "found"
+        ],
+        "properties": {
+          "expected": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "first_mismatch": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "First frame whose metadata differs.",
+            "minimum": 0
+          },
+          "found": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "Sample": {
+        "type": "object",
+        "description": "样片.",
+        "required": [
+          "kind",
+          "path",
+          "duration_s",
+          "frames",
+          "video_bytes",
+          "bitrate_bps",
+          "reason"
+        ],
+        "properties": {
+          "bitrate_bps": {
+            "type": "number",
+            "format": "double"
+          },
+          "duration_s": {
+            "type": "number",
+            "format": "double"
+          },
+          "frames": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SampleKind"
+          },
+          "path": {
+            "type": "string",
+            "description": "The source for auto samples, the file otherwise."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this part was picked."
+          },
+          "start_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Where an auto sample starts in the source, seconds."
+          },
+          "video_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Video bytes of the sample in the source.",
+            "minimum": 0
+          }
+        }
+      },
+      "SampleKind": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "file"
+        ]
+      },
+      "SampleSpec": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Cut from the source.",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "method": {
+                "$ref": "#/components/schemas/AutoMethod"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "auto"
+                ]
+              },
+              "secs": {
+                "type": "number",
+                "format": "double",
+                "description": "Length of each sample, seconds."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Ready-made sample files with the source's picture format.",
+            "required": [
+              "paths",
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "files"
+                ]
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "SavedProfile": {
+        "type": "object",
+        "description": "配置方案: a saved, named encoding profile. `profile.id` equals `id`.",
+        "required": [
+          "id",
+          "name",
+          "profile"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          }
+        }
+      },
+      "Savings": {
+        "type": "object",
+        "required": [
+          "source_size",
+          "candidate_size",
+          "saved_pct"
+        ],
+        "properties": {
+          "candidate_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "saved_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "Space saved relative to the source, in percent (negative if larger)."
+          },
+          "source_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ScorerStatus": {
+        "type": "object",
+        "description": "Whether 样片推荐 can score: the scoring FFmpeg runs and has libvmaf.",
+        "required": [
+          "ffmpeg",
+          "available",
+          "hdr_proxy"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it is not available."
+          },
+          "ffmpeg": {
+            "type": "string"
+          },
+          "hdr_proxy": {
+            "type": "boolean",
+            "description": "HDR and Dolby Vision samples are scored through libplacebo (display\nproxy, ADR 0011), which needs a Vulkan device."
+          },
+          "hdr_proxy_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Scoring": {
+        "type": "string",
+        "description": "How samples and trials are compared.",
+        "enum": [
+          "direct",
+          "hdr_proxy",
+          "dolby_vision_proxy"
+        ]
+      },
+      "ServerSettings": {
+        "type": "object",
+        "description": "Server behaviour outside the encoding settings. Changes apply at once,\nexcept slot counts, which never interrupt running tasks (ADR 0003).",
+        "properties": {
+          "cpu_slots": {
+            "type": "integer",
+            "format": "int32",
+            "default": 1,
+            "minimum": 0
+          },
+          "default_profile": {
+            "type": "string",
+            "description": "Profile for manual tasks that name none.",
+            "default": "default"
+          },
+          "gpu_slots": {
+            "type": "integer",
+            "format": "int32",
+            "default": 1,
+            "minimum": 0
+          },
+          "min_free_gib": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Free space each volume keeps: a transcode waits, and the monitor\npauses on that volume, rather than go below it (counting every\nfile at its full source size). GiB.",
+            "default": 10,
+            "minimum": 0
+          },
+          "monitor_enabled": {
+            "type": "boolean",
+            "description": "Master switch for automatic monitoring.",
+            "default": true
+          },
+          "observe_first_n": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Observation mode: the first N verified files go to review whatever\nthe verdict (ADR 0004). 0 turns it off.",
+            "default": 20,
+            "minimum": 0
+          },
+          "scan_interval_mins": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Interval of the incremental full scan, minutes.",
+            "default": 360,
+            "minimum": 0
+          },
+          "settle_secs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "A new file must keep its size and mtime this long before it is queued.",
+            "default": 60,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Settings": {
+        "type": "object",
+        "description": "Everything under `/api/settings`.",
+        "required": [
+          "global",
+          "server",
+          "observed",
+          "risk_acknowledged"
+        ],
+        "properties": {
+          "global": {
+            "$ref": "#/components/schemas/GlobalSettings"
+          },
+          "observed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files the observation mode has held so far.",
+            "minimum": 0
+          },
+          "risk_acknowledged": {
+            "type": "boolean",
+            "description": "The user has confirmed the risk notice the UI shows on first open\n(test software, transcodes replace the source). Kept here rather than\nin the browser, so the gateway and LAN entries share it."
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerSettings"
+          }
+        }
+      },
+      "SettingsSnapshot": {
+        "type": "object",
+        "description": "What a task runs against: the profile and global settings frozen at enqueue.",
+        "properties": {
+          "global": {
+            "$ref": "#/components/schemas/GlobalSettings",
+            "default": {
+              "dovi_tool": null,
+              "encode_timeout_factor": 30.0,
+              "ffmpeg": "ffmpeg",
+              "ffprobe": "ffprobe",
+              "hw_decode": true,
+              "min_savings_pct": 5.0,
+              "pending_retention_days": 14,
+              "recycle_dir": null,
+              "recycle_retention_days": 14,
+              "render_device": "/dev/dri/renderD128",
+              "scoring_ffmpeg": null,
+              "verify": {
+                "av_offset_hard_ms": 45.0,
+                "av_offset_soft_ms": 15.0,
+                "copied_stream_hash": false,
+                "decode_check": true,
+                "end_hard_ms": 1000.0,
+                "end_soft_ms": 50.0,
+                "hw_decode": true,
+                "spot_check_secs": 2.0,
+                "spot_checks": 8,
+                "ssim_hard": 0.8,
+                "ssim_soft": 0.9
+              }
+            }
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Profile",
+            "default": {
+              "container": "keep",
+              "encoder": "libx265",
+              "id": "default",
+              "preset": null,
+              "quality": 24,
+              "resize": "keep",
+              "threads": null
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SettingsUpdate": {
+        "type": "object",
+        "description": "Replaces the parts that are present.",
+        "properties": {
+          "global": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GlobalSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ServerSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Severity": {
+        "type": "string",
+        "enum": [
+          "hard",
+          "soft",
+          "info"
+        ]
+      },
+      "SkipCode": {
+        "type": "string",
+        "enum": [
+          "already_processed",
+          "no_video",
+          "dolby_vision",
+          "dolby_vision_av1",
+          "dolby_vision_encoder",
+          "dovi_tool_unavailable",
+          "dynamic_hdr",
+          "hdr10_plus_encoder",
+          "hdr",
+          "hdr_encoder",
+          "interlaced",
+          "unsupported_pixel_format",
+          "encoder_cannot_keep_format",
+          "encoder_unavailable",
+          "source_container_unsupported",
+          "stream_not_supported_in_container",
+          "target_exists"
+        ]
+      },
+      "SkipReason": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/SkipCode"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "SkippedFile": {
+        "type": "object",
+        "description": "A file not queued, and why.",
+        "required": [
+          "path",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "`active_task`, `recommend_pending`, `attempted`, `already_processed`,\n`probe_failed`, `unreadable`."
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "SpaceShortage": {
+        "type": "object",
+        "description": "A volume without room for the next file.",
+        "required": [
+          "volume",
+          "free_bytes",
+          "needed_bytes",
+          "waiting"
+        ],
+        "properties": {
+          "free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "needed_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What the next file needs free: its size, the files already counted\non the volume (running, or for the monitor also queued) and the\nreserve.",
+            "minimum": 0
+          },
+          "volume": {
+            "type": "string",
+            "description": "Mount point, e.g. `/vol1`."
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tasks (scheduler) or files (monitor) waiting for space here.",
+            "minimum": 0
+          }
+        }
+      },
+      "SpaceStatus": {
+        "type": "object",
+        "description": "Queued transcodes the scheduler holds back for space.",
+        "required": [
+          "shortages",
+          "waiting_tasks"
+        ],
+        "properties": {
+          "shortages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpaceShortage"
+            }
+          },
+          "waiting_tasks": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Their ids, oldest first."
+          }
+        }
+      },
+      "SpotCheck": {
+        "type": "object",
+        "required": [
+          "at_s",
+          "frames",
+          "ssim"
+        ],
+        "properties": {
+          "at_s": {
+            "type": "number",
+            "format": "double",
+            "description": "Seconds from the start of the video."
+          },
+          "frames": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ssim": {
+            "type": "number",
+            "format": "double",
+            "description": "Mean SSIM (All) over the compared frames."
+          }
+        }
+      },
+      "StreamHash": {
+        "type": "object",
+        "required": [
+          "index",
+          "source",
+          "candidate"
+        ],
+        "properties": {
+          "candidate": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "System": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SystemInfo"
+          },
+          {
+            "type": "object",
+            "required": [
+              "encoders",
+              "scorer",
+              "dovi",
+              "running_tasks",
+              "space"
+            ],
+            "properties": {
+              "dovi": {
+                "$ref": "#/components/schemas/DoviStatus",
+                "description": "dovi_tool for Dolby Vision routes."
+              },
+              "encoders": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EncoderProbe"
+                },
+                "description": "Startup trial encode of every encoder."
+              },
+              "running_tasks": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "scorer": {
+                "$ref": "#/components/schemas/ScorerStatus",
+                "description": "The scoring FFmpeg for 样片推荐."
+              },
+              "space": {
+                "$ref": "#/components/schemas/SpaceStatus",
+                "description": "Queued transcodes waiting for free space."
+              }
+            }
+          }
+        ]
+      },
+      "SystemInfo": {
+        "type": "object",
+        "description": "Static facts about this server, for `/api/system`.",
+        "required": [
+          "version",
+          "data_dir",
+          "started_at"
+        ],
+        "properties": {
+          "data_dir": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "source",
+          "path",
+          "state",
+          "quota",
+          "force",
+          "profile_id",
+          "fingerprint",
+          "snapshot",
+          "observe",
+          "created_at"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "文件夹批次 group."
+          },
+          "candidate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Candidate",
+                "description": "The candidate awaiting release while [`TaskState::Pending`]."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "choice": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecommendChoice",
+                "description": "样片推荐: the candidate saved as a profile."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "设置指纹 of the snapshot's profile."
+          },
+          "finished_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Process a file that already carries the processed marker."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "monitor_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "observe": {
+            "type": "boolean",
+            "description": "Held for review regardless of the verdict (observation mode)."
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Outcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "pending_reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PendingReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pending_until": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds after which a pending output is removed, or a\nrecommendation stops waiting for a choice."
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TaskProgress",
+                "description": "Latest encode progress while running (not stored)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Quota"
+          },
+          "recommend": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecommendRequest",
+                "description": "样片推荐: what was asked."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recommendation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Recommendation",
+                "description": "样片推荐: samples, trials and candidates, filled in as they are measured."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/SettingsSnapshot",
+            "description": "设置快照, frozen at enqueue."
+          },
+          "source": {
+            "$ref": "#/components/schemas/TaskSource"
+          },
+          "started_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TaskKind"
+          }
+        }
+      },
+      "TaskKind": {
+        "type": "string",
+        "enum": [
+          "transcode",
+          "recommend"
+        ]
+      },
+      "TaskList": {
+        "type": "object",
+        "required": [
+          "tasks"
+        ],
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          }
+        }
+      },
+      "TaskProgress": {
+        "type": "object",
+        "required": [
+          "id",
+          "out_time_s"
+        ],
+        "properties": {
+          "duration_s": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Source duration, when known."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "out_time_s": {
+            "type": "number",
+            "format": "double",
+            "description": "Seconds of output written."
+          },
+          "percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "recommend": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecommendProgress",
+                "description": "样片推荐: stage, trial and sample."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speed": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Encode speed relative to real time."
+          }
+        }
+      },
+      "TaskSource": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "folder_batch",
+          "monitor"
+        ]
+      },
+      "TaskState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "published",
+          "skipped",
+          "insufficient_savings",
+          "pending",
+          "released",
+          "discarded",
+          "expired",
+          "failed",
+          "cancelled",
+          "awaiting_choice",
+          "chosen"
+        ]
+      },
+      "Trial": {
+        "type": "object",
+        "description": "One quality value tried on the samples with one preset.",
+        "required": [
+          "quality",
+          "scores",
+          "done",
+          "passed",
+          "encode_secs",
+          "score_secs"
+        ],
+        "properties": {
+          "bitrate_bps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "Every sample has been scored."
+          },
+          "encode_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "encoded_secs": {
+            "type": "number",
+            "format": "double",
+            "description": "Seconds of sample video encoded in `encode_secs`."
+          },
+          "min_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Lowest score so far (最低样片分 once every sample is scored)."
+          },
+          "passed": {
+            "type": "boolean",
+            "description": "Done, and every sample reached the target."
+          },
+          "preset": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` for an encoder without presets (VAAPI)."
+          },
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "score_secs": {
+            "type": "number",
+            "format": "double"
+          },
+          "scores": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "description": "Mean VMAF per sample, in sample order. `None`: not scored, either\nstill to come or skipped because another sample already missed the\ntarget (the hardest samples go first)."
+          },
+          "size_ratio": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`video_bytes` relative to the samples' bytes in the source."
+          },
+          "video_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Encoded video bytes of all samples, once every sample was encoded.",
+            "minimum": 0
+          }
+        }
+      },
+      "Verdict": {
+        "type": "string",
+        "enum": [
+          "passed",
+          "passed_with_warnings",
+          "rejected"
+        ]
+      },
+      "VerifyStats": {
+        "type": "object",
+        "required": [
+          "reports",
+          "passed",
+          "passed_with_warnings",
+          "rejected",
+          "checks",
+          "observed",
+          "observe_first_n"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckCount"
+            },
+            "description": "How often each check reported, per severity."
+          },
+          "observe_first_n": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "observed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Observation mode: files held so far and the window size.",
+            "minimum": 0
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "passed_with_warnings": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "reports": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Verification reports counted.",
+            "minimum": 0
+          }
+        }
+      },
+      "VerifyThresholds": {
+        "type": "object",
+        "description": "Verification settings of ADR 0004. Timing thresholds come from\ndocs/research/duration-tolerance.md.",
+        "properties": {
+          "av_offset_hard_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "... and above which the candidate is rejected.",
+            "default": 45.0
+          },
+          "av_offset_soft_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "Change in audio-to-video start offset above which a warning is raised.",
+            "default": 15.0
+          },
+          "copied_stream_hash": {
+            "type": "boolean",
+            "description": "Hash every copied stream in source and candidate and require equality.\nOnly when both use the same container; reads both files in full.",
+            "default": false
+          },
+          "decode_check": {
+            "type": "boolean",
+            "description": "Decode the whole candidate video and reject on any decoder error.",
+            "default": true
+          },
+          "end_hard_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "... and above which the candidate is rejected.",
+            "default": 1000.0
+          },
+          "end_soft_ms": {
+            "type": "number",
+            "format": "double",
+            "description": "Change in any stream's end time above which a warning is raised.",
+            "default": 50.0
+          },
+          "hw_decode": {
+            "type": "boolean",
+            "description": "Try VAAPI decoding first for the decode check (falls back to software).",
+            "default": true
+          },
+          "spot_check_secs": {
+            "type": "number",
+            "format": "double",
+            "description": "Length of each spot check, seconds.",
+            "default": 2.0
+          },
+          "spot_checks": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Picture spot checks: this many evenly spaced points, skipping the\nfirst and last 5%; 0 disables them.",
+            "default": 8,
+            "minimum": 0
+          },
+          "ssim_hard": {
+            "type": "number",
+            "format": "double",
+            "description": "Spot-check SSIM below which the candidate is rejected (severe damage only).",
+            "default": 0.8
+          },
+          "ssim_soft": {
+            "type": "number",
+            "format": "double",
+            "description": "... and below which a warning is raised.",
+            "default": 0.9
+          }
+        },
+        "additionalProperties": false
+      },
+      "VolumeEstimate": {
+        "type": "object",
+        "description": "Free space a folder batch would need on one volume, worst case.",
+        "required": [
+          "volume",
+          "free_bytes",
+          "needed_bytes",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Files of the batch on this volume.",
+            "minimum": 0
+          },
+          "free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "needed_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sizes of the batch's files, the transcodes already queued or running\non the volume, and the reserve.",
+            "minimum": 0
+          },
+          "volume": {
+            "type": "string"
+          }
+        }
+      },
+      "WatchState": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "watching"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "path": {
+            "type": "string"
+          },
+          "watching": {
+            "type": "boolean",
+            "description": "inotify watch in place; without it only the full scan finds files."
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "tasks",
+      "description": "统一任务资源"
+    },
+    {
+      "name": "config",
+      "description": "设置、配置方案、监控目录"
+    },
+    {
+      "name": "system",
+      "description": "系统信息、尝试记录、回收目录、校验统计"
+    }
+  ]
+}

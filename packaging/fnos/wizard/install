@@ -1,0 +1,40 @@
+[
+    {
+        "stepTitle": "安装说明",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "<b><span style=\"color:#d03050\">风险提示：这是测试中的软件。</span></b>转码通过校验后会<b>替换源片</b>，视频有可能损坏或丢失内容。<b>不要用在重要的、没有备份的视频上</b>；建议先在测试目录或已经备份的目录上试一批，确认成品没有问题再扩大范围。"
+            },
+            {
+                "type": "tips",
+                "helpText": "fncompress 压缩视频画面，保留音轨、字幕、章节和 HDR/杜比视界元数据；成品通过校验后才替换源片，源片先进回收目录保留 14 天。"
+            },
+            {
+                "type": "tips",
+                "helpText": "<b>授权目录</b>：应用以专用用户 fncompress 运行，只能读写你授权的目录。安装后请到 <b>应用设置 → 授权目录</b> 添加要压缩或监控的视频目录，并给<b>读写</b>权限。"
+            },
+            {
+                "type": "tips",
+                "helpText": "<b>核显</b>：应用用户会加入 render 组，用 Intel QSV / VAAPI 编码，不需要 root。样片推荐的评分工具（FFmpeg 8.1.3 + libvmaf + libplacebo、dovi_tool 2.3.4）随安装包提供，首次启动时校验并解压到应用数据目录。"
+            },
+            {
+                "type": "checkbox",
+                "field": "wizard_risk_acknowledged",
+                "label": "风险确认",
+                "options": [
+                    {
+                        "label": "我已了解风险：转码会替换源片，要处理的视频已有备份或可以承受损失",
+                        "value": "yes"
+                    }
+                ],
+                "rules": [
+                    {
+                        "required": true,
+                        "message": "请先勾选确认已了解风险"
+                    }
+                ]
+            }
+        ]
+    }
+]

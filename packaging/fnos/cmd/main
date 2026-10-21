@@ -1,0 +1,120 @@
+#!/bin/sh
+# fnOS lifecycle (ADR 0012): start | stop | status.
+# Exit 0: done / running; 1: failed (message in TRIM_TEMP_LOGFILE); 3: not running.
+#
+# The service runs as the package user (config/privilege, in the render
+# group for QSV/VAAPI). Layout:
+#   $TRIM_APPDEST/fncompress                     the binary (front end embedded)
+#   $TRIM_APPDEST/runtime/scoring-*.zip          the scoring runtime (ADR 0006)
+#   $TRIM_APPDEST/app.sock                       unified gateway socket (/app/fncompress/),
+#                                                administrators only (X-Trim-Isadmin)
+#   127.0.0.1:$TRIM_SERVICE_PORT                 the same API, for checks on the NAS only
+#   $TRIM_PKGVAR/data                            database (--data-dir)
+#   $TRIM_PKGVAR/scoring                         the scoring runtime, unpacked
+#   $TRIM_PKGVAR/authorized_paths                TRIM_DATA_ACCESSIBLE_PATHS (browse roots)
+#   $TRIM_PKGVAR/fncompress.log                  service log
+
+APP="${TRIM_APPDEST:-$(cd "$(dirname "$0")/.." && pwd)/target}"
+VAR="${TRIM_PKGVAR:-/tmp/fncompress}"
+PORT="${TRIM_SERVICE_PORT:-5180}"
+LOG="$VAR/fncompress.log"
+PIDFILE="$VAR/fncompress.pid"
+SOCK="$APP/app.sock"
+ERR="${TRIM_TEMP_LOGFILE:-$VAR/error.log}"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin${PATH:+:$PATH}"
+# fnOS starts the scripts with umask 000. Published outputs must stay
+# readable by the NAS users (authorized directories add ACLs on top);
+# nothing the service writes should be writable by everyone.
+umask 022
+
+note() { echo "$(date '+%F %T') [main] $*" >> "$LOG"; }
+fail() { note "$1"; printf '%s\n' "$1" > "$ERR"; exit 1; }
+
+running() {
+    [ -f "$PIDFILE" ] || return 1
+    pid=$(tr -dc 0-9 < "$PIDFILE")
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && grep -q fncompress "/proc/$pid/cmdline" 2>/dev/null
+}
+
+# Unpacks the scoring runtime when its checksum changed. Failure only
+# disables 样片推荐 and dovi_tool; the service still starts.
+prepare_scoring() {
+    zip=$(ls "$APP"/runtime/scoring-*.zip 2>/dev/null | head -n 1)
+    [ -n "$zip" ] || { note "no scoring runtime in the package"; return 0; }
+    want=$(cut -d ' ' -f 1 "$zip.sha256" 2>/dev/null)
+    dir="$VAR/scoring"
+    if [ -n "$want" ] && [ "$(cat "$dir/.bundle" 2>/dev/null)" = "$want" ] && [ -x "$dir/ffmpeg" ]; then
+        return 0
+    fi
+    got=$(sha256sum "$zip" | cut -d ' ' -f 1)
+    if [ -z "$want" ] || [ "$got" != "$want" ]; then
+        note "scoring runtime checksum mismatch: $got, expected $want"
+        return 1
+    fi
+    note "unpacking the scoring runtime to $dir"
+    rm -rf "$dir.new" && mkdir -p "$dir.new" &&
+        unzip -q -o "$zip" -d "$dir.new" &&
+        chmod 755 "$dir.new/ffmpeg" "$dir.new/dovi_tool" &&
+        echo "$want" > "$dir.new/.bundle" &&
+        rm -rf "$dir" && mv "$dir.new" "$dir" || {
+        note "unpacking the scoring runtime failed"
+        rm -rf "$dir.new"
+        return 1
+    }
+}
+
+start() {
+    running && return 0
+    mkdir -p "$VAR/data" || fail "无法创建数据目录 $VAR/data"
+    # Installs before umask 022 left these world-writable.
+    chmod 700 "$VAR/data"
+    chmod -R go-w "$VAR/scoring" 2>/dev/null
+    chmod 644 "$LOG" "$PIDFILE" "$VAR/authorized_paths" 2>/dev/null
+    [ -x "$APP/fncompress" ] || fail "安装包不完整：没有 $APP/fncompress，请重新安装。"
+    # Keep one previous log.
+    if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 10485760 ]; then
+        mv -f "$LOG" "$LOG.1"
+    fi
+    note "start as $(id -un) ($(id -Gn)), app $APP"
+    prepare_scoring
+    printf '%s\n' "$TRIM_DATA_ACCESSIBLE_PATHS" > "$VAR/authorized_paths"
+
+    cd "$VAR" || fail "无法进入 $VAR"
+    RUST_LOG="${RUST_LOG:-info}" "$APP/fncompress" serve \
+        --listen "127.0.0.1:$PORT" \
+        --data-dir "$VAR/data" \
+        --socket "$SOCK" \
+        --roots-file "$VAR/authorized_paths" \
+        --bundled-scoring-ffmpeg "$VAR/scoring/ffmpeg" \
+        >> "$LOG" 2>&1 < /dev/null &
+    echo $! > "$PIDFILE"
+    # On the device the new pid file came out 666 despite umask 022.
+    chmod 644 "$PIDFILE"
+    # The encoder trial runs before the port opens; a crash shows at once.
+    sleep 2
+    running || fail "fncompress 启动后立即退出，日志末尾：
+$(tail -n 20 "$LOG")"
+}
+
+stop() {
+    running || { rm -f "$PIDFILE"; return 0; }
+    kill -TERM "$pid" 2>/dev/null
+    # Running tasks get 30 s to stop FFmpeg, then HTTP drains for 10 s.
+    i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 45 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        note "still running after 45 s, killing"
+        kill -KILL "$pid" 2>/dev/null
+    fi
+    rm -f "$PIDFILE" "$SOCK"
+}
+
+case "$1" in
+start) start; exit 0 ;;
+stop) stop; exit 0 ;;
+status) running && exit 0; exit 3 ;;
+*) exit 1 ;;
+esac

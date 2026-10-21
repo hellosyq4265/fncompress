@@ -1,0 +1,29 @@
+{
+  "name": "fncompress-web",
+  "private": true,
+  "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run gen:api && vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "npm run gen:api && vitest run",
+    "gen:api": "openapi-typescript openapi.json -o src/api/schema.d.ts"
+  },
+  "dependencies": {
+    "naive-ui": "^2.41.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.3",
+    "@vue/test-utils": "^2.5.1",
+    "happy-dom": "^20.14.6",
+    "openapi-typescript": "^7.6.1",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.0",
+    "vitest": "3.2",
+    "vue-tsc": "^2.2.10"
+  }
+}

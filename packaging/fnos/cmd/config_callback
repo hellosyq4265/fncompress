@@ -1,0 +1,9 @@
+#!/bin/sh
+# Runs after the app settings change, e.g. the authorized directories
+# (应用设置 → 授权目录). The running service reads this file for every
+# directory listing, so new directories show up without a restart.
+VAR="${TRIM_PKGVAR:-/tmp/fncompress}"
+umask 022
+mkdir -p "$VAR" && printf '%s\n' "$TRIM_DATA_ACCESSIBLE_PATHS" > "$VAR/authorized_paths"
+echo "$(date '+%F %T') [config_callback] authorized: $TRIM_DATA_ACCESSIBLE_PATHS" >> "$VAR/fncompress.log"
+exit 0

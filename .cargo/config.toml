@@ -1,0 +1,6 @@
+# NAS target: fully static musl binary, built on Windows with
+#   cargo zigbuild --release --target x86_64-unknown-linux-musl
+# (rusqlite "bundled" compiles SQLite with zig cc, so no system libs are needed.)
+
+[alias]
+nas = "zigbuild --release --target x86_64-unknown-linux-musl -p fncompress"

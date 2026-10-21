@@ -1,0 +1,8 @@
+/target/
+/web/node_modules/
+/web/dist/
+/web/src/api/schema.d.ts
+*.db
+*.db-journal
+.env
+/runtime/

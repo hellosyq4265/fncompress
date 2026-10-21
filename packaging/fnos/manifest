@@ -1,0 +1,17 @@
+appname               = fncompress
+version               = 0.1.0
+display_name          = 视频压缩
+desc                  = 压缩 NAS 上的视频画面，保留音轨、字幕和 HDR/杜比视界元数据；支持核显硬件编码、目录监控和样片推荐。
+platform              = x86
+source                = thirdparty
+maintainer            = SunYaQin
+distributor           = SunYaQin
+os_min_version        = 1.1.3100
+ctl_stop              = true
+install_type          =
+desktop_uidir         = ui
+desktop_applaunchname = fncompress.main
+service_port          = 5180
+checkport             = true
+disable_authorization_path = false
+changelog             = 首个版本。
