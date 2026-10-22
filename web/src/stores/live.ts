@@ -3,7 +3,7 @@
 // queued transcodes wait for free space to `space`.
 import { onUnmounted, ref, shallowRef } from 'vue'
 import { api } from '../api/client'
-import type { MonitorStatus, SpaceStatus } from '../api/types'
+import type { MonitorStatus, ScanProgress, SpaceStatus } from '../api/types'
 import { connectEvents, type ConnectionState } from '../logic/events'
 import { pollTasks, reloadTasks, taskEvent } from './tasks'
 
@@ -21,6 +21,7 @@ async function reloadSpace() {
 type Listener<A extends unknown[]> = Set<(...args: A) => void>
 const configListeners: Listener<[string]> = new Set()
 const monitorListeners: Listener<[MonitorStatus]> = new Set()
+const scanListeners: Listener<[ScanProgress]> = new Set()
 const resyncListeners: Listener<[]> = new Set()
 const pollListeners: Listener<[]> = new Set()
 
@@ -33,6 +34,7 @@ export function startLive(): void {
       if (e.event === 'config_changed') configListeners.forEach((f) => f(e.section))
       else if (e.event === 'monitor_status') monitorListeners.forEach((f) => f(e.status))
       else if (e.event === 'space_status') space.value = e.status
+      else if (e.event === 'scan_progress') scanListeners.forEach((f) => f(e))
       else taskEvent(e)
     },
     resync() {
@@ -75,5 +77,7 @@ export function addMonitorListener(fn: (s: MonitorStatus) => void): void {
 /** In a component: `section` is "settings", "profiles" or "monitors". */
 export const onConfigChanged = (fn: (section: string) => void) => listen(configListeners, fn)
 export const onMonitorStatus = (fn: (s: MonitorStatus) => void) => listen(monitorListeners, fn)
+/** In a component: folder batch progress, for every request (match `scan_id`). */
+export const onScanProgress = (fn: (p: ScanProgress) => void) => listen(scanListeners, fn)
 /** In a component: reload what it shows (reconnect or missed events). */
 export const onResync = (fn: () => void) => listen(resyncListeners, fn)

@@ -26,6 +26,14 @@ pub enum Event {
     TaskDeleted {
         id: i64,
     },
+    /// A folder batch was queued: all its tasks at once, in id order.
+    BatchCreated {
+        batch_id: i64,
+        tasks: Vec<Task>,
+    },
+    /// How far a folder batch preview or submission got (`scan_id` is the
+    /// one the request carried).
+    ScanProgress(ScanProgress),
     /// Encode progress, at most once a second per task.
     TaskProgress(TaskProgress),
     /// Settings, profiles or monitored directories changed.
@@ -48,12 +56,35 @@ impl Event {
             Event::TaskCreated { .. } => "task_created",
             Event::TaskUpdated { .. } => "task_updated",
             Event::TaskDeleted { .. } => "task_deleted",
+            Event::BatchCreated { .. } => "batch_created",
+            Event::ScanProgress(_) => "scan_progress",
             Event::TaskProgress(_) => "task_progress",
             Event::ConfigChanged { .. } => "config_changed",
             Event::MonitorStatus { .. } => "monitor_status",
             Event::SpaceStatus { .. } => "space_status",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanPhase {
+    /// Listing the directory; `total` is not known yet.
+    Walking,
+    /// Checking each file (attempt records, processed marker).
+    Screening,
+    /// Writing the tasks.
+    Queueing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ScanProgress {
+    pub scan_id: String,
+    pub phase: ScanPhase,
+    /// Files checked so far (`screening`).
+    pub done: usize,
+    /// Files to check; 0 while walking.
+    pub total: usize,
 }
 
 #[derive(Clone)]

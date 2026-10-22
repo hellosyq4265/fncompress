@@ -31,6 +31,8 @@ export const EVENT_NAMES = [
   'task_created',
   'task_updated',
   'task_deleted',
+  'batch_created',
+  'scan_progress',
   'task_progress',
   'config_changed',
   'monitor_status',

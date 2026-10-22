@@ -5,8 +5,12 @@
 
 use std::{
     collections::HashSet,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    path::{Component, Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 use fncompress_core::{
@@ -29,7 +33,7 @@ use utoipa::ToSchema;
 use crate::{
     db::{Db, SqliteProbeCache},
     error::{AppError, AppResult},
-    events::{Event, Events},
+    events::{Event, Events, ScanPhase, ScanProgress},
     model::{
         Attempt, NewTask, RecommendChoice, SavedProfile, Task, TaskKind, TaskSource, TaskState,
     },
@@ -143,6 +147,14 @@ pub struct BatchRequest {
     /// Also queue files with an attempt record for this profile.
     #[serde(default)]
     pub include_attempted: bool,
+    /// Screen only these files under `dir` (the preview's `files`) instead
+    /// of walking it again.
+    #[serde(default)]
+    #[schema(value_type = Option<Vec<String>>)]
+    pub files: Option<Vec<PathBuf>>,
+    /// Sent back in `scan_progress` events while the request runs.
+    #[serde(default)]
+    pub scan_id: Option<String>,
 }
 
 fn yes() -> bool {
@@ -542,11 +554,19 @@ impl App {
             include_attempted: req.include_attempted,
             ignore_recommend: true,
         };
+        let report = ScanReport::new(&self.events, req.scan_id.as_deref());
+        let paths = match &req.files {
+            Some(files) => listed_files(&dir, req.recursive, files)?,
+            None => {
+                report.send(ScanPhase::Walking, 0, 0);
+                scan::walk(&dir, req.recursive, &Excludes::default())
+            }
+        };
         let mut files = Vec::new();
         let mut skipped = Vec::new();
-        for path in scan::walk(&dir, req.recursive, &Excludes::default()) {
-            match scan::screen(&self.db, &prober, &path, &fingerprint, opts)? {
-                Ok(_) => files.push(path),
+        for screened in screen_all(&self.db, &prober, &paths, &fingerprint, opts, &report)? {
+            match screened {
+                Ok(path) => files.push(path),
                 Err(s) => skipped.push(s),
             }
         }
@@ -570,21 +590,33 @@ impl App {
         Ok(self.screen_batch(req)?.0)
     }
 
+    /// Queues a folder batch: the batch and its tasks in one transaction,
+    /// announced with one `batch_created` event.
     pub fn submit_batch(&self, req: &BatchRequest) -> AppResult<BatchResult> {
         let (screened, snapshot) = self.screen_batch(req)?;
-        let batch_id = self.db.create_batch(&screened.dir)?;
-        let mut tasks = Vec::new();
-        for path in screened.files {
-            tasks.push(self.enqueue(&NewTask {
+        let n = screened.files.len();
+        ScanReport::new(&self.events, req.scan_id.as_deref()).send(ScanPhase::Queueing, n, n);
+        let new: Vec<_> = screened
+            .files
+            .into_iter()
+            .map(|path| NewTask {
                 kind: TaskKind::Transcode,
                 source: TaskSource::FolderBatch,
-                batch_id: Some(batch_id),
+                batch_id: None,
                 monitor_id: None,
                 path,
                 force: req.force,
                 snapshot: snapshot.clone(),
                 recommend: None,
-            })?);
+            })
+            .collect();
+        let (batch_id, tasks) = self.db.insert_batch(&screened.dir, &new)?;
+        if !tasks.is_empty() {
+            self.events.send(Event::BatchCreated {
+                batch_id,
+                tasks: tasks.clone(),
+            });
+            self.scheduler.wake();
         }
         Ok(BatchResult {
             batch_id,
@@ -823,6 +855,130 @@ impl Drop for ClosingGuard<'_> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&self.id);
+    }
+}
+
+/// Files screened at once: each may need an ffprobe run, which mostly
+/// waits on the disk.
+const SCREEN_WORKERS: usize = 4;
+
+/// `scan::screen` for each path, `SCREEN_WORKERS` at a time; results in
+/// the order of `paths`.
+fn screen_all(
+    db: &Db,
+    prober: &Prober,
+    paths: &[PathBuf],
+    fingerprint: &str,
+    opts: ScreenOptions,
+    report: &ScanReport,
+) -> AppResult<Vec<Result<PathBuf, SkippedFile>>> {
+    let total = paths.len();
+    report.send(ScanPhase::Screening, 0, total);
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let mut results: Vec<_> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..SCREEN_WORKERS.min(total))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    while !failed.load(Ordering::Relaxed) {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = paths.get(i) else { break };
+                        let r = scan::screen(db, prober, path, fingerprint, opts);
+                        failed.fetch_or(r.is_err(), Ordering::Relaxed);
+                        out.push((i, r));
+                        report.screened(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+                    }
+                    out
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("screen worker panicked"))
+            .collect()
+    });
+    results.sort_by_key(|(i, _)| *i);
+    results
+        .into_iter()
+        .map(|(i, r)| Ok(r?.map(|_| paths[i].clone())))
+        .collect()
+}
+
+/// The files of a submitted preview: each must be a video directly under
+/// `dir` (or below it when `recursive`), outside ignored directories. A file
+/// gone since the preview is left to screening, which skips it.
+fn listed_files(dir: &Path, recursive: bool, files: &[PathBuf]) -> AppResult<Vec<PathBuf>> {
+    let bad =
+        |p: &Path, why: &str| AppError::bad_request("bad_path", format!("{} {why}", p.display()));
+    let mut out = Vec::with_capacity(files.len());
+    for f in files {
+        let Ok(rel) = f.strip_prefix(dir) else {
+            return Err(bad(f, "不在所选目录下"));
+        };
+        let depth = rel.components().count();
+        if depth == 0 || rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+            return Err(bad(f, "不在所选目录下"));
+        }
+        if !recursive && depth > 1 {
+            return Err(bad(f, "在子目录里，而本次不含子目录"));
+        }
+        if !scan::is_video(f) || scan::is_ignored_path(dir, f) {
+            return Err(bad(f, "不是可处理的视频文件"));
+        }
+        if std::fs::symlink_metadata(f).is_ok_and(|m| !m.is_file()) {
+            return Err(bad(f, "不是普通文件"));
+        }
+        out.push(f.clone());
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// `scan_progress` events for one request that carried a `scan_id`;
+/// per-file updates at most every `INTERVAL`.
+struct ScanReport<'a> {
+    events: &'a Events,
+    scan_id: Option<&'a str>,
+    last: Mutex<Option<Instant>>,
+}
+
+impl<'a> ScanReport<'a> {
+    const INTERVAL: Duration = Duration::from_millis(200);
+
+    fn new(events: &'a Events, scan_id: Option<&'a str>) -> Self {
+        Self {
+            events,
+            scan_id,
+            last: Mutex::new(None),
+        }
+    }
+
+    fn send(&self, phase: ScanPhase, done: usize, total: usize) {
+        let Some(scan_id) = self.scan_id else { return };
+        self.events.send(Event::ScanProgress(ScanProgress {
+            scan_id: scan_id.to_owned(),
+            phase,
+            done,
+            total,
+        }));
+    }
+
+    fn screened(&self, done: usize, total: usize) {
+        if self.scan_id.is_none() {
+            return;
+        }
+        {
+            let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            let now = Instant::now();
+            if done < total && last.is_some_and(|t| now - t < Self::INTERVAL) {
+                return;
+            }
+            *last = Some(now);
+        }
+        self.send(ScanPhase::Screening, done, total);
     }
 }
 

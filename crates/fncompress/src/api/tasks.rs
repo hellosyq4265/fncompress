@@ -122,6 +122,12 @@ struct CreateTask {
     /// Folder batch: also queue files with an attempt record for this profile.
     #[serde(default)]
     include_attempted: bool,
+    /// Folder batch: screen only these files (the preview's `files`)
+    /// instead of walking `dir` again.
+    #[schema(value_type = Option<Vec<String>>)]
+    files: Option<Vec<PathBuf>>,
+    /// Folder batch: sent back in `scan_progress` events.
+    scan_id: Option<String>,
     /// 样片推荐: target and samples (defaults: VMAF 95, 4 auto samples of 10 s
     /// picked by bitrate).
     recommend: Option<RecommendRequest>,
@@ -208,6 +214,8 @@ async fn create_task(
                 recursive: req.recursive,
                 force: req.force,
                 include_attempted: req.include_attempted,
+                files: req.files,
+                scan_id: req.scan_id,
             };
             let b = blocking(&state, move |app| app.submit_batch(&r)).await?;
             Created {

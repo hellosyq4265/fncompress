@@ -14,6 +14,7 @@ import {
   NFormItem,
   NInput,
   NInputGroup,
+  NProgress,
   NRadioButton,
   NRadioGroup,
   NSpace,
@@ -22,13 +23,15 @@ import {
   useMessage,
 } from 'naive-ui'
 import { api } from '../api/client'
-import type { BatchPreview, Preview } from '../api/types'
+import type { BatchPreview, Preview, ScanProgress } from '../api/types'
 import PathPicker from '../components/PathPicker.vue'
 import ProfileSelect from '../components/ProfileSelect.vue'
 import RoutePlanView from '../components/RoutePlanView.vue'
 import { errorMessage, isApiError } from '../logic/errors'
 import { adviseOnPreview, attemptLine, groupSkipped, relativeTo } from '../logic/preview'
+import { newScanId, scanView } from '../logic/scan'
 import { SPACE_NOTE, estimateLine, shortEstimates } from '../logic/space'
+import { onScanProgress } from '../stores/live'
 
 type Mode = 'file' | 'dir'
 
@@ -53,6 +56,22 @@ const submitting = ref(false)
 
 const target = computed(() => (mode.value === 'file' ? path.value : dir.value).trim())
 
+// A folder's preview and submission report progress under an id of ours;
+// events for an older request are ignored.
+const scan = ref<ScanProgress | null>(null)
+let scanId: string | null = null
+onScanProgress((p) => {
+  if (p.scan_id === scanId) scan.value = p
+})
+function startScan(): string {
+  scan.value = null
+  scanId = newScanId()
+  return scanId
+}
+const scanBar = computed(() =>
+  mode.value === 'dir' && (previewing.value || submitting.value) ? scanView(scan.value, submitting.value) : null,
+)
+
 // Previews follow the form, debounced; a late answer for an old input is dropped.
 let generation = 0
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -61,6 +80,8 @@ watch(
   () => {
     clearTimeout(timer)
     generation++
+    scanId = null
+    scan.value = null
     filePreview.value = null
     batchPreview.value = null
     previewError.value = null
@@ -83,6 +104,7 @@ async function runPreview() {
         recursive: recursive.value,
         force: force.value,
         include_attempted: includeAttempted.value,
+        scan_id: startScan(),
       })
       if (mine === generation) batchPreview.value = p
     }
@@ -143,6 +165,9 @@ async function submit(withForce = force.value) {
         recursive: recursive.value,
         force: withForce,
         include_attempted: includeAttempted.value,
+        // Only what the preview listed: the folder is not walked again.
+        files: batchPreview.value?.files,
+        scan_id: startScan(),
       })
       const skipped = r.skipped.length ? `，跳过 ${r.skipped.length} 个` : ''
       message.success(`批次 #${r.batch_id}：${r.tasks.length} 个文件已加入队列${skipped}`)
@@ -212,7 +237,16 @@ function picked(p: string) {
     </NForm>
 
     <div v-if="target" class="preview">
-      <NSpin :show="previewing">
+      <div v-if="scanBar" class="scan">
+        <NProgress
+          type="line"
+          :percentage="scanBar.percent ?? 0"
+          :show-indicator="scanBar.percent !== null"
+          :processing="scanBar.percent === null"
+        />
+        <div class="scan-text">{{ scanBar.text }}</div>
+      </div>
+      <NSpin :show="previewing && !scanBar">
         <NAlert v-if="previewError" type="error" :title="previewError" />
 
         <template v-else-if="filePreview && advice">
@@ -281,6 +315,14 @@ function picked(p: string) {
 }
 .preview {
   margin-top: 20px;
+}
+.scan {
+  margin-bottom: 12px;
+}
+.scan-text {
+  margin-top: 4px;
+  font-size: 13px;
+  opacity: 0.7;
 }
 .note {
   margin-bottom: 10px;

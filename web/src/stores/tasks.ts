@@ -10,8 +10,8 @@ import { ACTIVE_STATES, FINISHED_STATES, TaskSync, mergePolled, oldestFinishedId
 
 /** Finished tasks per page. */
 export const PAGE = 50
-/** Unfinished tasks are loaded in full, up to this many. */
-const ACTIVE_LIMIT = 500
+/** Unfinished tasks are loaded in full, this many per request (the server's cap). */
+const ACTIVE_PAGE = 500
 
 export const tasks: TaskMap = reactive(new Map<number, Task>()) as TaskMap
 const sync = new TaskSync(tasks)
@@ -24,6 +24,22 @@ export function taskEvent(e: ServerEvent): void {
   sync.event(e)
 }
 
+/**
+ * Every unfinished task, paged newest first. One page is not enough: with a
+ * long queue it would hold only the newest queued tasks and miss the running
+ * ones, which have the oldest ids.
+ */
+async function allUnfinished(): Promise<Task[]> {
+  const all: Task[] = []
+  let before: number | undefined
+  for (;;) {
+    const page = (await api.tasks({ state: ACTIVE_STATES, limit: ACTIVE_PAGE, before })).tasks
+    all.push(...page)
+    if (page.length < ACTIVE_PAGE) return all
+    before = page[page.length - 1].id
+  }
+}
+
 let generation = 0
 let polls = 0
 
@@ -32,12 +48,12 @@ export async function reloadTasks(): Promise<void> {
   sync.begin()
   try {
     const [active, finished] = await Promise.all([
-      api.tasks({ state: ACTIVE_STATES, limit: ACTIVE_LIMIT }),
+      allUnfinished(),
       api.tasks({ state: FINISHED_STATES, limit: PAGE }),
     ])
     // A newer reload started meanwhile; it will finish the sync.
     if (mine !== generation) return
-    sync.finish([...active.tasks, ...finished.tasks])
+    sync.finish([...active, ...finished.tasks])
     moreFinished.value = finished.tasks.length === PAGE
     tasksError.value = null
     tasksLoaded.value = true
@@ -56,11 +72,11 @@ export async function pollTasks(): Promise<void> {
   const mine = ++polls
   try {
     const [active, finished] = await Promise.all([
-      api.tasks({ state: ACTIVE_STATES, limit: ACTIVE_LIMIT }),
+      allUnfinished(),
       api.tasks({ state: FINISHED_STATES, limit: PAGE }),
     ])
     if (mine !== polls || reloads !== generation || sync.resyncing) return
-    mergePolled(tasks, active.tasks, finished.tasks)
+    mergePolled(tasks, active, finished.tasks)
     tasksError.value = null
     tasksLoaded.value = true
   } catch (e) {

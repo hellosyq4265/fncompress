@@ -22,6 +22,9 @@ export function applyEvent(tasks: TaskMap, e: ServerEvent): boolean {
     }
     case 'task_deleted':
       return tasks.delete(e.id)
+    case 'batch_created':
+      for (const t of e.tasks) tasks.set(t.id, t)
+      return e.tasks.length > 0
     case 'task_progress': {
       const t = tasks.get(e.id)
       if (!t || t.state !== 'running') return false
@@ -127,6 +130,19 @@ export function tasksIn(tasks: Iterable<Task>, view: View): Task[] {
     case 'finished':
       return list.sort((a, b) => b.id - a.id)
   }
+}
+
+/** The queue shows this many cards folded, and at most this many unfolded. */
+export const FOLDED_CARDS = 10
+export const MAX_CARDS = 30
+
+/**
+ * The cards a long queue shows: the first `FOLDED_CARDS`, or up to
+ * `MAX_CARDS` once unfolded. `hidden` is how many are not shown.
+ */
+export function foldQueue<T>(list: T[], unfolded: boolean): { shown: T[]; hidden: number } {
+  const shown = list.slice(0, unfolded ? MAX_CARDS : FOLDED_CARDS)
+  return { shown, hidden: list.length - shown.length }
 }
 
 export function countByView(tasks: Iterable<Task>): Record<View, number> {

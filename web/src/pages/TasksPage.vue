@@ -1,13 +1,13 @@
 <script setup lang="ts">
 // The one task queue (decisions doc): running and queued first, then what
 // awaits a decision, then history. Phones get the same list with cancel only.
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NEmpty, NSpin, NTab, NTabs, NTag } from 'naive-ui'
 import TaskCard from '../components/TaskCard.vue'
 import TaskDetail from '../components/TaskDetail.vue'
 import { errorMessage } from '../logic/errors'
-import { countByView, tasksIn, type View } from '../logic/tasks'
+import { FOLDED_CARDS, countByView, foldQueue, tasksIn, type View } from '../logic/tasks'
 import { loadMoreFinished, moreFinished, tasks, tasksError, tasksLoaded } from '../stores/tasks'
 import { useIsMobile } from '../stores/ui'
 
@@ -40,6 +40,13 @@ const list = computed(() => {
 })
 const current = computed(() => VIEWS.find((v) => v.key === view.value)!)
 
+// A long queue folds to its first cards; history pages instead.
+const unfolded = ref(false)
+watch([view, batch], () => (unfolded.value = false))
+const folded = computed(() =>
+  view.value === 'active' ? foldQueue(list.value, unfolded.value) : { shown: list.value, hidden: 0 },
+)
+
 const loadingMore = ref(false)
 const moreError = ref<string | null>(null)
 async function more() {
@@ -71,13 +78,20 @@ async function more() {
   <NEmpty v-else-if="list.length === 0" :description="current.empty" class="empty" />
   <div v-else class="list">
     <TaskCard
-      v-for="t in list"
+      v-for="t in folded.shown"
       :key="t.id"
       :task="t"
       :mobile="mobile"
       @open="(id) => setQuery({ task: String(id) })"
       @batch="(id) => setQuery({ batch: String(id) })"
     />
+  </div>
+
+  <div v-if="tasksLoaded && view === 'active' && list.length > FOLDED_CARDS" class="more">
+    <NButton text type="primary" @click="unfolded = !unfolded">
+      {{ unfolded ? '收起' : `展开（共 ${list.length} 个）` }}
+    </NButton>
+    <div v-if="unfolded && folded.hidden > 0" class="more-note">另有 {{ folded.hidden }} 个排队任务未显示</div>
   </div>
 
   <div v-if="tasksLoaded && view === 'finished' && moreFinished" class="more">
@@ -112,6 +126,11 @@ async function more() {
 .more {
   margin: 16px 0;
   text-align: center;
+}
+.more-note {
+  margin-top: 6px;
+  font-size: 13px;
+  opacity: 0.7;
 }
 .more-error {
   margin-top: 6px;

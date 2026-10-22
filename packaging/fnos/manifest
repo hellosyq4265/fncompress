@@ -1,5 +1,5 @@
 appname               = fncompress
-version               = 0.1.0
+version               = 0.1.1
 display_name          = 视频压缩
 desc                  = 压缩 NAS 上的视频画面，保留音轨、字幕和 HDR/杜比视界元数据；支持核显硬件编码、目录监控和样片推荐。
 platform              = x86

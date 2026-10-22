@@ -4,7 +4,7 @@ use fncompress_core::{
     pipeline::{Candidate, Outcome},
     recommend::Recommendation,
 };
-use rusqlite::{params, params_from_iter, OptionalExtension, Row, ToSql};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row, ToSql};
 
 use super::{from_json, from_name, name, now, path_str, to_json, Db, Result};
 use crate::model::{NewTask, PendingReason, RecommendChoice, Task, TaskSource, TaskState};
@@ -22,6 +22,28 @@ pub struct TaskFilter {
     /// Only tasks with a smaller id (paging, newest first).
     pub before: Option<i64>,
     pub limit: Option<u32>,
+}
+
+fn insert_task(conn: &Connection, t: &NewTask) -> Result<()> {
+    conn.execute(
+        "INSERT INTO tasks (kind, source, batch_id, monitor_id, path, state, quota, force,          profile_id, fingerprint, snapshot, created_at, recommend)          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            name(&t.kind),
+            name(&t.source),
+            t.batch_id,
+            t.monitor_id,
+            path_str(&t.path),
+            name(&TaskState::Queued),
+            name(&t.quota()),
+            t.force,
+            t.snapshot.profile.id,
+            t.snapshot.profile.fingerprint(),
+            to_json(&t.snapshot),
+            now(),
+            t.recommend.as_ref().map(to_json),
+        ],
+    )?;
+    Ok(())
 }
 
 fn row_to_task(r: &Row) -> Result<Task> {
@@ -76,29 +98,37 @@ impl Db {
     pub fn insert_task(&self, t: &NewTask) -> Result<Task> {
         let id = {
             let conn = self.conn();
-            conn.execute(
-                "INSERT INTO tasks (kind, source, batch_id, monitor_id, path, state, quota, force, \
-                 profile_id, fingerprint, snapshot, created_at, recommend) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-                params![
-                    name(&t.kind),
-                    name(&t.source),
-                    t.batch_id,
-                    t.monitor_id,
-                    path_str(&t.path),
-                    name(&TaskState::Queued),
-                    name(&t.quota()),
-                    t.force,
-                    t.snapshot.profile.id,
-                    t.snapshot.profile.fingerprint(),
-                    to_json(&t.snapshot),
-                    now(),
-                    t.recommend.as_ref().map(to_json),
-                ],
-            )?;
+            insert_task(&conn, t)?;
             conn.last_insert_rowid()
         };
         Ok(self.task(id)?.expect("just inserted"))
+    }
+
+    /// A folder batch and its tasks in one transaction. `tasks` get the new
+    /// batch id; the inserted tasks come back in id order.
+    pub fn insert_batch(&self, dir: &Path, tasks: &[NewTask]) -> Result<(i64, Vec<Task>)> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO batches (dir, created_at) VALUES (?1, ?2)",
+            params![path_str(dir), now()],
+        )?;
+        let batch_id = tx.last_insert_rowid();
+        for t in tasks {
+            insert_task(
+                &tx,
+                &NewTask {
+                    batch_id: Some(batch_id),
+                    ..t.clone()
+                },
+            )?;
+        }
+        tx.commit()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM tasks WHERE batch_id = ?1 ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([batch_id], row_to_task)?;
+        Ok((batch_id, rows.collect::<Result<_>>()?))
     }
 
     pub fn task(&self, id: i64) -> Result<Option<Task>> {
@@ -355,6 +385,25 @@ mod tests {
             snapshot: SettingsSnapshot::default(),
             recommend: None,
         }
+    }
+
+    #[test]
+    fn a_batch_and_its_tasks_go_in_together() {
+        let db = Db::open_in_memory().unwrap();
+        let other = db.insert_task(&new_task("/m/x.mkv")).unwrap();
+        let (batch, tasks) = db
+            .insert_batch(
+                Path::new("/m"),
+                &[new_task("/m/a.mkv"), new_task("/m/b.mkv")],
+            )
+            .unwrap();
+        assert_eq!(
+            tasks.iter().map(|t| t.path.clone()).collect::<Vec<_>>(),
+            [PathBuf::from("/m/a.mkv"), PathBuf::from("/m/b.mkv")]
+        );
+        assert!(tasks.iter().all(|t| t.batch_id == Some(batch)));
+        assert!(tasks[0].id > other.id && tasks[0].id < tasks[1].id);
+        assert_eq!(db.task(other.id).unwrap().unwrap().batch_id, None);
     }
 
     #[test]

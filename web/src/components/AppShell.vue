@@ -40,7 +40,7 @@ const menuOptions = computed<MenuOption[]>(() =>
       const b = badgeFor(p.path)
       return h('span', { class: 'menu-label' }, [
         p.title,
-        b ? h(NBadge, { value: b.n, max: 999, type: b.type, style: 'margin-left: 8px' }) : null,
+        b ? h(NBadge, { value: b.n, type: b.type, style: 'margin-left: 8px' }) : null,
       ])
     },
   })),

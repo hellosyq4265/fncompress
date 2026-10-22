@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use fncompress::{
     app::{BatchRequest, ManualRequest},
+    events::{Event, ScanPhase},
     model::{AttemptKind, PendingReason, ServerSettings, TaskState},
 };
 use fncompress_core::pipeline::Outcome;
@@ -25,6 +26,8 @@ fn batch(dir: &std::path::Path) -> BatchRequest {
         recursive: true,
         force: false,
         include_attempted: false,
+        files: None,
+        scan_id: None,
     }
 }
 
@@ -289,4 +292,102 @@ async fn quotas_cancel_and_shutdown() {
         .await
         .expect("dispatch loop ends")
         .unwrap();
+}
+
+/// Submitting a preview's file list queues just those files, without
+/// walking the directory again, with one `batch_created` event; progress
+/// events carry the request's `scan_id`. `force` skips probing, so this
+/// runs without FFmpeg.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_batch_queues_the_previewed_files_in_one_event() {
+    let fake = common::Tools {
+        ffmpeg: "missing-ffmpeg".into(),
+        ffprobe: "missing-ffprobe".into(),
+    };
+    let h = common::harness(&fake, common::plain(), |_| {});
+    // Nothing runs: only the queue is looked at.
+    h.runner.abort();
+    let media = h.dir.path().join("media");
+    for name in ["a.mkv", "b.mp4", "sub/c.mkv", "notes.txt"] {
+        let p = media.join(name);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, name).unwrap();
+    }
+    let req = BatchRequest {
+        force: true,
+        scan_id: Some("scan-1".into()),
+        ..batch(&media)
+    };
+    let preview = h.app.preview_batch(&req).unwrap();
+    assert_eq!(preview.files.len(), 3, "{preview:?}");
+
+    // Added after the preview: not in the list, so not queued.
+    std::fs::write(media.join("d.mkv"), "d").unwrap();
+    let mut rx = h.app.events.subscribe();
+    let listed = vec![preview.files[0].clone(), preview.files[2].clone()];
+    let b = h
+        .app
+        .submit_batch(&BatchRequest {
+            files: Some(listed.clone()),
+            ..req.clone()
+        })
+        .unwrap();
+    assert_eq!(
+        b.tasks.iter().map(|t| t.path.clone()).collect::<Vec<_>>(),
+        listed
+    );
+
+    let mut events = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        events.push(e);
+    }
+    let progress: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ScanProgress(p) => Some((p.scan_id.as_str(), p.phase, p.done, p.total)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        progress.first(),
+        Some(&("scan-1", ScanPhase::Screening, 0, 2))
+    );
+    assert!(
+        progress.contains(&("scan-1", ScanPhase::Screening, 2, 2)),
+        "{progress:?}"
+    );
+    assert_eq!(
+        progress.last(),
+        Some(&("scan-1", ScanPhase::Queueing, 2, 2))
+    );
+    let created: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::TaskCreated { .. } | Event::BatchCreated { .. }))
+        .collect();
+    let [Event::BatchCreated { batch_id, tasks }] = &created[..] else {
+        panic!("{created:?}")
+    };
+    assert_eq!(*batch_id, b.batch_id);
+    assert_eq!(tasks.len(), 2);
+
+    // A listed file must be a video under the directory, and not in a
+    // subdirectory when the batch leaves them out.
+    let outside = h.dir.path().join("x.mkv");
+    std::fs::write(&outside, "x").unwrap();
+    for (files, recursive) in [
+        (vec![outside], true),
+        (vec![preview.dir.join("../x.mkv")], true),
+        (vec![preview.files[0].with_file_name("notes.txt")], true),
+        (vec![preview.files[2].clone()], false),
+    ] {
+        let e = h
+            .app
+            .submit_batch(&BatchRequest {
+                files: Some(files.clone()),
+                recursive,
+                ..req.clone()
+            })
+            .unwrap_err();
+        assert_eq!(e.code, "bad_path", "{files:?}");
+    }
 }

@@ -7,7 +7,7 @@
       "name": "LicenseRef-PolyForm-Noncommercial-1.0.0",
       "identifier": "LicenseRef-PolyForm-Noncommercial-1.0.0"
     },
-    "version": "0.1.0"
+    "version": "0.1.1"
   },
   "paths": {
     "/api/attempts": {
@@ -90,7 +90,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Server-sent events. Each SSE `event:` name equals the payload's `event`\nfield (see the `Event` schema): `task_created`, `task_updated`,\n`task_deleted`, `task_progress`, `config_changed`, `monitor_status`,\n`space_status`.\n`ready` is sent first; `lagged` means events were dropped and the client\nshould reload what it shows.",
+        "summary": "Server-sent events. Each SSE `event:` name equals the payload's `event`\nfield (see the `Event` schema): `task_created`, `task_updated`,\n`task_deleted`, `batch_created`, `scan_progress`, `task_progress`,\n`config_changed`, `monitor_status`, `space_status`.\n`ready` is sent first; `lagged` means events were dropped and the client\nshould reload what it shows.",
         "description": "`X-Accel-Buffering: no` stops nginx in front (the fnOS gateway, ADR\n0012, buffers proxied responses by default) from holding events back.",
         "operationId": "events",
         "responses": {
@@ -1483,6 +1483,16 @@
           "dir": {
             "type": "string"
           },
+          "files": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Screen only these files under `dir` (the preview's `files`) instead\nof walking it again."
+          },
           "force": {
             "type": "boolean"
           },
@@ -1498,6 +1508,13 @@
           },
           "recursive": {
             "type": "boolean"
+          },
+          "scan_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sent back in `scan_progress` events while the request runs."
           }
         }
       },
@@ -1663,6 +1680,16 @@
               "null"
             ]
           },
+          "files": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Folder batch: screen only these files (the preview's `files`)\ninstead of walking `dir` again."
+          },
           "force": {
             "type": "boolean",
             "description": "Process files that already carry the processed marker."
@@ -1698,6 +1725,13 @@
           "recursive": {
             "type": "boolean",
             "description": "Folder batch: include subdirectories (default true)."
+          },
+          "scan_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Folder batch: sent back in `scan_progress` events."
           },
           "source": {
             "$ref": "#/components/schemas/TaskSource"
@@ -1981,6 +2015,56 @@
                 "format": "int64"
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A folder batch was queued: all its tasks at once, in id order.",
+            "required": [
+              "batch_id",
+              "tasks",
+              "event"
+            ],
+            "properties": {
+              "batch_id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "batch_created"
+                ]
+              },
+              "tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScanProgress",
+                "description": "How far a folder batch preview or submission got (`scan_id` is the\none the request carried)."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "event"
+                ],
+                "properties": {
+                  "event": {
+                    "type": "string",
+                    "enum": [
+                      "scan_progress"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "How far a folder batch preview or submission got (`scan_id` is the\none the request carried)."
           },
           {
             "allOf": [
@@ -3698,6 +3782,41 @@
           "source_size": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ScanPhase": {
+        "type": "string",
+        "enum": [
+          "walking",
+          "screening",
+          "queueing"
+        ]
+      },
+      "ScanProgress": {
+        "type": "object",
+        "required": [
+          "scan_id",
+          "phase",
+          "done",
+          "total"
+        ],
+        "properties": {
+          "done": {
+            "type": "integer",
+            "description": "Files checked so far (`screening`).",
+            "minimum": 0
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ScanPhase"
+          },
+          "scan_id": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Files to check; 0 while walking.",
             "minimum": 0
           }
         }

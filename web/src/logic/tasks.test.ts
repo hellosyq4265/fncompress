@@ -6,6 +6,7 @@ import {
   actionsFor,
   applyEvent,
   countByView,
+  foldQueue,
   mergePolled,
   oldestFinishedId,
   tasksIn,
@@ -31,6 +32,13 @@ describe('applyEvent', () => {
     expect(applyEvent(m, { event: 'task_deleted', id: 1 })).toBe(true)
     expect(m.size).toBe(0)
     expect(applyEvent(m, { event: 'task_deleted', id: 1 })).toBe(false)
+  })
+
+  it('adds a whole folder batch at once', () => {
+    const m: TaskMap = new Map()
+    const tasks = [task(5, { batch_id: 2 }), task(6, { batch_id: 2 })]
+    expect(applyEvent(m, { event: 'batch_created', batch_id: 2, tasks })).toBe(true)
+    expect([...m.keys()]).toEqual([5, 6])
   })
 
   it('puts progress on running tasks only', () => {
@@ -150,5 +158,26 @@ describe('selectors', () => {
       retry: false,
     })
     expect(actionsFor(task(1, { ...rec, state: 'chosen' }))).toMatchObject({ choose: false, retry: true, remove: true })
+  })
+})
+
+describe('foldQueue', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
+
+  it('shows a short queue whole', () => {
+    expect(foldQueue(ids(10), false)).toEqual({ shown: ids(10), hidden: 0 })
+  })
+
+  it('folds a long queue to the first 10', () => {
+    const { shown, hidden } = foldQueue(ids(600), false)
+    expect(shown).toEqual(ids(10))
+    expect(hidden).toBe(590)
+  })
+
+  it('unfolds to at most 30', () => {
+    expect(foldQueue(ids(25), true)).toEqual({ shown: ids(25), hidden: 0 })
+    const { shown, hidden } = foldQueue(ids(600), true)
+    expect(shown).toEqual(ids(30))
+    expect(hidden).toBe(570)
   })
 })

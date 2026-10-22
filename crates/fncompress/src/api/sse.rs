@@ -20,8 +20,8 @@ pub fn routes() -> OpenApiRouter<ApiState> {
 
 /// Server-sent events. Each SSE `event:` name equals the payload's `event`
 /// field (see the `Event` schema): `task_created`, `task_updated`,
-/// `task_deleted`, `task_progress`, `config_changed`, `monitor_status`,
-/// `space_status`.
+/// `task_deleted`, `batch_created`, `scan_progress`, `task_progress`,
+/// `config_changed`, `monitor_status`, `space_status`.
 /// `ready` is sent first; `lagged` means events were dropped and the client
 /// should reload what it shows.
 ///
