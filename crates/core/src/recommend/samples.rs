@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     hevc,
-    probe::{ffmpeg_input, DynamicRange, MediaInfo, ProbeDepth, Prober, VideoParams},
+    probe::{self, ffmpeg_input, DynamicRange, MediaInfo, ProbeDepth, Prober, VideoParams},
     route::RoutePlan,
     tool::{self, CancelToken},
 };
@@ -318,23 +318,8 @@ pub(super) fn video_packets(
     stream: u32,
     cancel: Option<&CancelToken>,
 ) -> Result<(u64, u64), RecommendError> {
-    let (mut frames, mut bytes) = (0u64, 0u64);
-    tool::run_lines(
-        ffprobe(ffprobe_path)
-            .args(["-select_streams", &stream.to_string()])
-            .args(["-show_entries", "packet=size", "-of", "csv=p=0"])
-            .arg(ffmpeg_input(path)),
-        PACKETS_TIMEOUT,
-        cancel,
-        |line| {
-            if let Ok(size) = line.trim().trim_end_matches(',').parse::<u64>() {
-                frames += 1;
-                bytes += size;
-            }
-        },
-    )
-    .map_err(RecommendError::tool("统计视频数据包"))?;
-    Ok((frames, bytes))
+    probe::stream_packets(ffprobe_path, path, stream, PACKETS_TIMEOUT, cancel)
+        .map_err(RecommendError::tool("统计视频数据包"))
 }
 
 /// Cuts `len` seconds of the video from `at` (relative to the container

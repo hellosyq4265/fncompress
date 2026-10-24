@@ -31,14 +31,15 @@ use serde_json::json;
 use utoipa::ToSchema;
 
 use crate::{
-    db::{Db, SqliteProbeCache},
+    db::{Db, NewAttempt, SqliteProbeCache},
     error::{AppError, AppResult},
     events::{Event, Events, ScanPhase, ScanProgress},
     model::{
-        Attempt, NewTask, RecommendChoice, SavedProfile, Task, TaskKind, TaskSource, TaskState,
+        Attempt, AttemptKind, NewTask, RecommendChoice, SavedProfile, Task, TaskKind, TaskSource,
+        TaskState,
     },
     scan::{self, Excludes, ScreenOptions, SkippedFile},
-    scheduler::Scheduler,
+    scheduler::{self, Scheduler},
     space::{self, Gate, SpaceGate, VolumeEstimate},
 };
 
@@ -692,7 +693,8 @@ impl App {
     }
 
     /// A new task for the same file with the profile as it is now; attempt
-    /// records do not stop a manual retry.
+    /// records do not stop a manual retry. A retry of a transcode the
+    /// savings prediction skipped transcodes without predicting.
     pub fn retry(&self, id: i64) -> AppResult<Task> {
         let old = self.task(id)?;
         if !old.state.is_final() {
@@ -712,7 +714,7 @@ impl App {
                 format!("这个文件已有进行中或待确认的任务 #{active}"),
             ));
         }
-        let snapshot = match self.snapshot(Some(&old.profile_id)) {
+        let mut snapshot = match self.snapshot(Some(&old.profile_id)) {
             Ok(s) => s,
             // The profile was deleted since: retry with the frozen one.
             Err(e) if e.code == "not_found" => SettingsSnapshot {
@@ -721,6 +723,9 @@ impl App {
             },
             Err(e) => return Err(e),
         };
+        if matches!(old.outcome, Some(Outcome::PredictedNoGain { .. })) {
+            snapshot.profile.predict_savings = false;
+        }
         self.enqueue(&NewTask {
             kind: old.kind,
             source: TaskSource::Manual,
@@ -788,21 +793,51 @@ impl App {
             return Ok(task);
         }
         let task = self.pending(id)?;
+        remove_candidate(&task)?;
+        self.db.close_pending(id, state, None, None)?;
+        let task = self.task(id)?;
+        self.events.task_updated(&task);
+        Ok(task)
+    }
+
+    /// Ends a pending output that saves less than its task's threshold as
+    /// 收益不足: the candidate is deleted and the attempt record says so.
+    /// Before the savings check came ahead of the verdict, such outputs
+    /// were held for review when a check failed; the janitor clears them.
+    pub fn close_insufficient(&self, id: i64) -> AppResult<Task> {
+        let _guard = self.closing(id)?;
+        let task = self.pending(id)?;
         let candidate = task
             .candidate
             .as_ref()
             .expect("pending task has a candidate");
-        match std::fs::remove_file(&candidate.path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(AppError::internal(format!(
-                    "删除成品 {} 失败：{e}",
-                    candidate.path.display()
-                )))
-            }
+        let min = task.snapshot.global.min_savings_pct;
+        if candidate.savings.sufficient(min) {
+            return Err(AppError::conflict(
+                "sufficient_savings",
+                format!(
+                    "任务 #{id} 的成品节省 {:.1}%，收益足够",
+                    candidate.savings.saved_pct
+                ),
+            ));
         }
-        self.db.close_pending(id, state, None, None)?;
+        remove_candidate(&task)?;
+        self.db.record_attempt(&NewAttempt {
+            identity: candidate.source_identity,
+            fingerprint: &task.fingerprint,
+            path: &task.path,
+            kind: AttemptKind::InsufficientSavings,
+            code: None,
+            message: &scheduler::insufficient_message(&candidate.savings, min, &candidate.report),
+            task_id: Some(id),
+        })?;
+        let outcome = Outcome::InsufficientSavings {
+            savings: candidate.savings,
+            min_savings_pct: min,
+            report: candidate.report.clone(),
+        };
+        self.db
+            .close_pending(id, TaskState::InsufficientSavings, Some(&outcome), None)?;
         let task = self.task(id)?;
         self.events.task_updated(&task);
         Ok(task)
@@ -840,6 +875,22 @@ impl App {
             ));
         }
         Ok(ClosingGuard { app: self, id })
+    }
+}
+
+/// Deletes a pending task's candidate; one already gone is fine.
+fn remove_candidate(task: &Task) -> AppResult<()> {
+    let candidate = task
+        .candidate
+        .as_ref()
+        .expect("pending task has a candidate");
+    match std::fs::remove_file(&candidate.path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(AppError::internal(format!(
+            "删除成品 {} 失败：{e}",
+            candidate.path.display()
+        ))),
     }
 }
 

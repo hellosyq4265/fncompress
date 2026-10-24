@@ -1,10 +1,14 @@
 // The single SSE connection to /api/events. The server sends `ready` first on
 // every (re)connect and `lagged` when this client missed events; both mean
-// "reload what you show", because events may have been missed.
+// "reload what you show", because events may have been missed. While idle it
+// sends `ping` every few seconds, so silence means the stream is stuck.
 //
-// A reverse proxy that buffers whole responses (seen: the router in front of
-// a domain name) holds the stream back, so `ready` never arrives. Then the
-// page polls instead: `poll` every few seconds until `ready` comes.
+// A reverse proxy that buffers responses (seen: the router in front of a
+// domain name) holds the stream back: `ready` comes late or never, and events
+// after it arrive in bursts whenever the proxy's buffer fills. So a stream
+// counts as live only if `ready` comes within a few seconds of opening it.
+// Otherwise the page closes it, polls every few seconds and tries the stream
+// again a while later.
 import type { ServerEvent } from '../api/types'
 
 /** The parts of EventSource used here (tests pass a fake). */
@@ -39,14 +43,18 @@ export const EVENT_NAMES = [
   'space_status',
 ] as const satisfies readonly ServerEvent['event'][]
 
-const CLOSED = 2
-
 export interface ConnectOptions {
   url?: string
   create?: (url: string) => EventSourceLike
-  /** Delay before reopening a connection the browser gave up on. */
+  /** Delay before reopening a stream that failed. */
   retryMs?: number
-  /** Without `ready` for this long, start polling (when `poll` is given). */
+  /** `ready` later than this after opening: the stream is held back. */
+  readyMs?: number
+  /** Nothing at all (pings included) for this long after `ready`: reconnect. */
+  quietMs?: number
+  /** After a held-back stream, wait this long before trying it again. */
+  retestMs?: number
+  /** After a failure, wait this long before polling. */
   pollAfterMs?: number
   /** Between polls. */
   pollMs?: number
@@ -59,13 +67,17 @@ export function connectEvents(h: EventHandlers, opts: ConnectOptions = {}): () =
   const url = opts.url ?? 'api/events'
   const create = opts.create ?? ((u: string) => new EventSource(u) as EventSourceLike)
   const retryMs = opts.retryMs ?? 3000
+  const readyMs = opts.readyMs ?? 5000
+  const quietMs = opts.quietMs ?? 20000
+  const retestMs = opts.retestMs ?? 120000
   const pollAfterMs = opts.pollAfterMs ?? 5000
   const pollMs = opts.pollMs ?? 5000
   const setTimer = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
   const clearTimer = opts.clearTimer ?? ((t) => clearTimeout(t as ReturnType<typeof setTimeout>))
 
   let source: EventSourceLike | null = null
-  let timer: unknown = null
+  let reopenTimer: unknown = null
+  let watchdog: unknown = null
   let stopped = false
   let pollTimer: unknown = null
   let polling = false
@@ -86,26 +98,76 @@ export function connectEvents(h: EventHandlers, opts: ConnectOptions = {}): () =
   const schedulePoll = () => {
     if (h.poll && pollTimer === null && !stopped) pollTimer = setTimer(tick, pollAfterMs)
   }
+  const pollNow = () => {
+    if (!h.poll || polling || stopped) return
+    if (pollTimer !== null) clearTimer(pollTimer)
+    tick()
+  }
   const stopPolling = () => {
     if (pollTimer !== null) clearTimer(pollTimer)
     pollTimer = null
     polling = false
   }
 
+  const clearWatchdog = () => {
+    if (watchdog !== null) clearTimer(watchdog)
+    watchdog = null
+  }
+  /** Closes the current stream and opens a new one after `ms`. */
+  const reopenIn = (ms: number) => {
+    clearWatchdog()
+    source?.close()
+    source = null
+    if (reopenTimer === null && !stopped) reopenTimer = setTimer(open, ms)
+  }
+
   const open = () => {
-    timer = null
+    reopenTimer = null
     const s = create(url)
     source = s
+    let ready = false
     report('connecting')
-    schedulePoll()
+
+    const watch = (ms: number) => {
+      clearWatchdog()
+      watchdog = setTimer(() => {
+        watchdog = null
+        if (source !== s) return
+        if (ready) {
+          // Went silent: the connection is stuck somewhere.
+          report('reconnecting')
+          schedulePoll()
+          reopenIn(0)
+        } else {
+          // Held back by a proxy; what it lets through later is stale.
+          pollNow()
+          reopenIn(retestMs)
+        }
+      }, ms)
+    }
+    watch(readyMs)
+    const alive = () => {
+      if (source === s && ready) watch(quietMs)
+    }
+
     s.addEventListener('ready', () => {
+      if (source !== s) return
+      ready = true
+      alive()
       stopPolling()
       h.state('open')
       h.resync()
     })
-    s.addEventListener('lagged', () => h.resync())
+    s.addEventListener('ping', alive)
+    s.addEventListener('lagged', () => {
+      if (source !== s) return
+      alive()
+      h.resync()
+    })
     for (const name of EVENT_NAMES) {
       s.addEventListener(name, (ev) => {
+        if (source !== s) return
+        alive()
         let data: unknown
         try {
           data = JSON.parse(ev.data)
@@ -116,22 +178,20 @@ export function connectEvents(h: EventHandlers, opts: ConnectOptions = {}): () =
       })
     }
     s.onerror = () => {
-      if (stopped) return
+      if (stopped || source !== s) return
       report('reconnecting')
       schedulePoll()
-      // The browser retries by itself unless it closed the stream (e.g. the
-      // server answered with an error page); then we reopen it ourselves.
-      if (s.readyState === CLOSED && timer === null) {
-        s.close()
-        timer = setTimer(open, retryMs)
-      }
+      // Reopened here rather than by the browser, so each attempt's `ready`
+      // deadline counts from when it started.
+      reopenIn(retryMs)
     }
   }
 
   open()
   return () => {
     stopped = true
-    if (timer !== null) clearTimer(timer)
+    if (reopenTimer !== null) clearTimer(reopenTimer)
+    clearWatchdog()
     stopPolling()
     source?.close()
   }

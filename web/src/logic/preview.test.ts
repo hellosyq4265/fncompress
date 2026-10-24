@@ -73,6 +73,7 @@ describe('adviseOnPreview', () => {
     expect(same.notes[0].title).toBe('同一方案设置已尝试过 2 次')
     expect(attemptLine(attempt('fp1'), 'fp1')).toMatch(/校验未通过（同一方案设置）：帧数不同$/)
     expect(attemptLine(attempt('fp0', 'insufficient_savings'), 'fp1')).toMatch(/收益不足：帧数不同$/)
+    expect(attemptLine(attempt('fp0', 'predicted_no_gain'), 'fp1')).toMatch(/预判收益不足：帧数不同$/)
   })
 })
 

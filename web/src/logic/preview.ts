@@ -27,6 +27,7 @@ export const ATTEMPT_LABEL: Record<Attempt['kind'], string> = {
   skipped: '保护性跳过',
   rejected: '校验未通过',
   insufficient_savings: '收益不足',
+  predicted_no_gain: '预判收益不足',
 }
 
 export function attemptLine(a: Attempt, fingerprint: string): string {

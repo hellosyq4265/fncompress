@@ -421,6 +421,11 @@ fn video_args(
     }
     push(&[&spec("filter"), &filters.join(",")]);
     push(&[&spec("fps_mode"), "passthrough"]);
+    // The encoder would otherwise count time in 1/frame-rate ticks. A
+    // Matroska source's millisecond timestamps with a rounded frame rate
+    // (42 ms DefaultDuration: 500/21 for 23.976 fps) then land on a 42 ms
+    // grid, and every ~6 s two frames share a pts.
+    push(&[&spec("enc_time_base"), "demux"]);
     if encoder.hw() == Some(Hw::Qsv) && matroska {
         // QSV gives the last frame of a stream a dts equal to its pts, ahead
         // of the frames flushed after it. FFmpeg then raises those frames'
@@ -1022,6 +1027,7 @@ mod tests {
             ("qp", "25"),
             ("filter", "scale=1920:1080,format=nv12,hwupload"),
             ("fps_mode", "passthrough"),
+            ("enc_time_base", "demux"),
             ("color_primaries", "bt709"),
         ] {
             assert!(has(&full, &[&format!("-{opt}:1"), value]), "{opt}");
@@ -1159,6 +1165,7 @@ libva info: va_openDriver() returns 0
             let mut i = info("mov,mp4,m4a,3gp,3g2,mj2", "yuv420p", &[]);
             i.streams[2].packets = Some(PacketStats {
                 count: 188,
+                bytes: 0,
                 empty: 0,
                 start_s: Some(-1.005),
                 end_s: Some(2.984),

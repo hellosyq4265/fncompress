@@ -1,6 +1,7 @@
-//! One transcode from source to result: probe, route, encode, probe the
-//! candidate, verify, check the savings, publish. The CLI and the M2
-//! scheduler share this. Dolby Vision and HDR10+ routes encode in steps
+//! One transcode from source to result: probe, route, predict the savings
+//! (when the profile asks, [`crate::predict`]), encode, probe the candidate,
+//! verify, check the savings, publish. The CLI and the M2 scheduler share
+//! this. Dolby Vision and HDR10+ routes encode in steps
 //! (see [`crate::dovi`], [`crate::hdr10plus`]) and verify the RPU and the
 //! HDR10+ messages as well.
 
@@ -15,6 +16,7 @@ use crate::{
     hdr10plus,
     identity::FileIdentity,
     inspect,
+    predict::{self, Estimate, PredictProgress},
     probe::{DynamicRange, MediaInfo, ProbeDepth, ProbeError, Prober},
     publish::{self, PublishError, PublishRequest, Published, Savings},
     recycle,
@@ -34,6 +36,14 @@ pub struct Job<'a> {
     /// Publish a passing candidate; otherwise stop at [`Outcome::Verified`].
     pub publish: bool,
     pub cancel: Option<&'a CancelToken>,
+}
+
+/// What a transcode reports while it runs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum JobProgress {
+    /// Encoding the samples of the savings prediction.
+    Predicting(PredictProgress),
+    Encoding(Progress),
 }
 
 /// A verified (or rejected) candidate next to its source.
@@ -64,7 +74,14 @@ pub enum Outcome {
     Skipped { reason: SkipReason },
     /// A hard check failed: the candidate awaits manual release (待确认成品).
     Rejected { candidate: Candidate },
-    /// Saved less than the threshold (收益不足); the source stays.
+    /// 预判无收益: the savings prediction put the saving well below the
+    /// threshold, so nothing but its samples was encoded; the source stays.
+    PredictedNoGain {
+        estimate: Estimate,
+        min_savings_pct: f64,
+    },
+    /// Saved less than the threshold (收益不足), whatever the verdict in
+    /// `report`; the candidate is gone and the source stays.
     InsufficientSavings {
         savings: Savings,
         min_savings_pct: f64,
@@ -98,7 +115,7 @@ pub enum PipelineError {
 pub fn transcode_file(
     prober: &Prober,
     job: &Job,
-    on_progress: impl FnMut(Progress),
+    mut on_progress: impl FnMut(JobProgress),
 ) -> Result<Outcome, PipelineError> {
     let source = job.source;
     let snapshot = job.snapshot;
@@ -121,6 +138,29 @@ pub fn transcode_file(
         Err(reason) => return Ok(Outcome::Skipped { reason }),
     };
 
+    let min = snapshot.global.min_savings_pct;
+    // The estimate of a transcode that runs goes into its report.
+    let mut prediction = None;
+    if snapshot.profile.predict_savings {
+        match predict::estimate(&info, &plan, snapshot, source, job.cancel, |p| {
+            on_progress(JobProgress::Predicting(p))
+        }) {
+            Ok(Some(estimate)) if estimate.no_gain(min) => {
+                return Ok(Outcome::PredictedNoGain {
+                    estimate,
+                    min_savings_pct: min,
+                })
+            }
+            Ok(estimate) => prediction = Some(Ok(estimate)),
+            Err(e @ ToolError::Cancelled { .. }) => return Err(e.into()),
+            // A failed estimate costs the transcode nothing.
+            Err(e) => {
+                tracing::warn!(source = %source.display(), "savings prediction failed: {e}");
+                prediction = Some(Err(e));
+            }
+        }
+    }
+
     let path = command::candidate_path(source, plan.container);
     // Intermediate files of a Dolby Vision or HDR10+ route; the RPU file
     // lives until verification has compared the candidate's with it.
@@ -134,7 +174,7 @@ pub fn transcode_file(
             &path,
             &mut work,
             job.cancel,
-            on_progress,
+            |p| on_progress(JobProgress::Encoding(p)),
         )?
     } else {
         let cmd = command::build(&info, &plan, snapshot, source, &path);
@@ -143,7 +183,7 @@ pub fn transcode_file(
             &cmd,
             command::encode_timeout(snapshot, info.format.duration_s),
             job.cancel,
-            on_progress,
+            |p| on_progress(JobProgress::Encoding(p)),
         )?;
         Injected::default()
     };
@@ -175,6 +215,9 @@ pub fn transcode_file(
     if let Some((_, summary)) = &injected.rpu {
         report.findings.push(dolby_vision_note(&plan, summary));
     }
+    if let Some(prediction) = &prediction {
+        report.findings.push(prediction_note(prediction));
+    }
     drop(work);
     let candidate = Candidate {
         source: source.to_owned(),
@@ -187,13 +230,15 @@ pub fn transcode_file(
         plan,
     };
 
-    if candidate.report.verdict == Verdict::Rejected {
-        return Ok(Outcome::Rejected { candidate });
-    }
-    let min = snapshot.global.min_savings_pct;
+    // Savings first: a candidate that saves too little is never published,
+    // so it is not worth a review whatever the checks said. The report
+    // keeps the verdict.
     if !candidate.savings.sufficient(min) {
         let _ = std::fs::remove_file(&candidate.path);
         return Ok(insufficient(candidate, min));
+    }
+    if candidate.report.verdict == Verdict::Rejected {
+        return Ok(Outcome::Rejected { candidate });
     }
     if !job.publish {
         return Ok(Outcome::Verified { candidate });
@@ -472,6 +517,24 @@ pub fn source_rpu(
         )));
     }
     Ok(summary)
+}
+
+/// The savings prediction of a transcode that ran, for the report: the
+/// estimate next to the measured saving shows how well it guessed.
+fn prediction_note(prediction: &Result<Option<Estimate>, ToolError>) -> Finding {
+    let message = match prediction {
+        Ok(Some(e)) => format!(
+            "转码前预判节省约 {:.1}%（{} 段样片，共 {:.0} 秒，用时 {:.0} 秒）",
+            e.saved_pct, e.samples, e.sample_secs, e.secs
+        ),
+        Ok(None) => "片子太短或视频大小未知，没有预判收益".into(),
+        Err(e) => format!("预判收益失败，直接转码：{e}"),
+    };
+    Finding {
+        check: "predict_savings".into(),
+        severity: Severity::Info,
+        message,
+    }
 }
 
 /// What a Dolby Vision route did, for the report.

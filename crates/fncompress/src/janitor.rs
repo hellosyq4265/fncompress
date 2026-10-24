@@ -1,5 +1,6 @@
 //! Retention: pending outputs past their `pending_until` are deleted (task
-//! state `expired`), recommendations stop awaiting a choice after the same
+//! state `expired`), pending outputs that save too little are deleted as
+//! 收益不足 (held for review by older versions), recommendations stop awaiting a choice after the same
 //! period, recycle entries older than `recycle_retention_days` are purged,
 //! stale probe cache rows are dropped. Runs at startup and hourly.
 
@@ -18,6 +19,7 @@ const PROBE_CACHE_DAYS: i64 = 90;
 #[derive(Debug, Default, PartialEq, Serialize)]
 pub struct Sweep {
     pub expired_pending: Vec<i64>,
+    pub insufficient_pending: Vec<i64>,
     pub expired_choices: Vec<i64>,
     pub purged_recycle: usize,
     pub pruned_probe_cache: usize,
@@ -36,6 +38,24 @@ pub fn sweep(app: &App, at: i64) -> Sweep {
             }
         }
         Err(e) => tracing::error!("listing expired pending outputs failed: {e}"),
+    }
+    match app.db.pending_tasks() {
+        Ok(tasks) => {
+            let insufficient = tasks.into_iter().filter(|t| {
+                t.candidate
+                    .as_ref()
+                    .is_some_and(|c| !c.savings.sufficient(t.snapshot.global.min_savings_pct))
+            });
+            for t in insufficient {
+                match app.close_insufficient(t.id) {
+                    Ok(_) => out.insufficient_pending.push(t.id),
+                    Err(e) => {
+                        tracing::warn!(id = t.id, "closing a no-gain pending output failed: {e}")
+                    }
+                }
+            }
+        }
+        Err(e) => tracing::error!("listing pending outputs failed: {e}"),
     }
     match app.db.expired_choices(at) {
         Ok(ids) => {

@@ -7,6 +7,7 @@ use fncompress_core::{
     encoder::Quota,
     identity::FileIdentity,
     pipeline::{Candidate, Outcome},
+    predict::PredictProgress,
     recommend::{RecommendProgress, RecommendRequest, Recommendation},
     settings::{Profile, SettingsSnapshot},
 };
@@ -160,6 +161,10 @@ pub struct TaskProgress {
     pub speed: Option<f64>,
     /// 样片推荐: stage, trial and sample.
     pub recommend: Option<RecommendProgress>,
+    /// 转码前预判收益: the sample being encoded. `None` once the transcode
+    /// itself runs.
+    #[serde(default)]
+    pub predict: Option<PredictProgress>,
 }
 
 /// What enqueueing needs; the rest is filled in by the database.
@@ -192,6 +197,8 @@ pub enum AttemptKind {
     Skipped,
     Rejected,
     InsufficientSavings,
+    /// 预判无收益: the savings prediction skipped the transcode.
+    PredictedNoGain,
 }
 
 /// 尝试记录: a failed attempt on one file with one profile (ADR 0005). The

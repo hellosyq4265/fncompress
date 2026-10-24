@@ -10,6 +10,7 @@ import {
   STATE_TAG,
   baseName,
   formatBytes,
+  formatDuration,
   formatPct,
   formatTime,
   formatUntil,
@@ -37,6 +38,10 @@ const savings = computed(() => {
   if (candidate.value) return candidate.value.savings
   return o && (o.outcome === 'published' || o.outcome === 'insufficient_savings') ? o.savings : null
 })
+const estimate = computed(() => {
+  const o = t.value?.outcome
+  return o?.outcome === 'predicted_no_gain' ? o.estimate : null
+})
 const published = computed(() => {
   const o = t.value?.outcome
   return o?.outcome === 'published' ? o.published : null
@@ -49,6 +54,7 @@ function profileText(p: Profile | undefined): string {
   if (p.preset) parts.push(`预设 ${p.preset}`)
   if (p.container !== 'keep') parts.push(`转为 ${p.container.toUpperCase()}`)
   if (p.resize !== 'keep') parts.push(`最高 ${p.resize.max_height}p`)
+  if (p.predict_savings) parts.push('转码前预判收益')
   return parts.join(' · ')
 }
 
@@ -90,6 +96,11 @@ const PENDING_REASON = { rejected: '有硬性检查未通过', observation: '观
         </NDescriptionsItem>
         <NDescriptionsItem v-if="savings" label="大小">
           {{ formatBytes(savings.source_size) }} → {{ formatBytes(savings.candidate_size) }}（节省 {{ formatPct(savings.saved_pct) }}）
+        </NDescriptionsItem>
+        <NDescriptionsItem v-if="estimate" label="预判">
+          {{ formatBytes(estimate.source_size) }} → 约 {{ formatBytes(estimate.estimated_size) }}（节省约
+          {{ formatPct(estimate.saved_pct) }}）；试编 {{ estimate.samples }} 段样片共 {{ formatDuration(estimate.sample_secs) }}，用时
+          {{ formatDuration(estimate.secs) }}。重试会跳过预判，直接整片转码。
         </NDescriptionsItem>
         <NDescriptionsItem v-if="candidate && t.state === 'pending'" label="成品"><span class="path">{{ candidate.path }}</span></NDescriptionsItem>
         <NDescriptionsItem v-if="published" label="已发布到"><span class="path">{{ published.target }}</span></NDescriptionsItem>

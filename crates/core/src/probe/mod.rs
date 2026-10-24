@@ -37,7 +37,7 @@ use crate::{
 
 /// Bumped whenever [`MediaInfo`] changes shape or meaning; old cache entries
 /// are then ignored.
-pub const PROBE_SCHEMA: u32 = 8;
+pub const PROBE_SCHEMA: u32 = 9;
 
 /// Frames of the primary video inspected for side data.
 const SIDE_DATA_FRAMES: u32 = 5;
@@ -162,6 +162,10 @@ pub struct AudioParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PacketStats {
     pub count: u64,
+    /// Total packet payload, bytes. Hidden video frames (flag D) are not
+    /// counted, as they are not in [`PacketStats::count`].
+    #[serde(default)]
+    pub bytes: u64,
     /// Packets of at most 2 bytes: for `mov_text`, the empty samples that
     /// FFmpeg's MP4 muxer adds between subtitles, more on every remux.
     #[serde(default)]
@@ -457,6 +461,34 @@ impl Prober {
         cmd.args(["-v", "error", "-hide_banner"]);
         cmd
     }
+}
+
+/// Packets and bytes of one stream, counted from the packet table without
+/// decoding. For files probed here anyway, [`PacketStats`] has the same.
+pub fn stream_packets(
+    ffprobe: &Path,
+    path: &Path,
+    stream: u32,
+    timeout: Duration,
+    cancel: Option<&CancelToken>,
+) -> Result<(u64, u64), ToolError> {
+    let (mut packets, mut bytes) = (0u64, 0u64);
+    tool::run_lines(
+        Command::new(ffprobe)
+            .args(["-v", "error", "-hide_banner"])
+            .args(["-select_streams", &stream.to_string()])
+            .args(["-show_entries", "packet=size", "-of", "csv=p=0"])
+            .arg(ffmpeg_input(path)),
+        timeout,
+        cancel,
+        |line| {
+            if let Ok(size) = line.trim().trim_end_matches(',').parse::<u64>() {
+                packets += 1;
+                bytes += size;
+            }
+        },
+    )?;
+    Ok((packets, bytes))
 }
 
 fn identity_of(path: &Path) -> Result<FileIdentity, ProbeError> {

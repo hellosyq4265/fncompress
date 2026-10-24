@@ -36,6 +36,10 @@ describe('format', () => {
       text: '1:00 / 10:00 · 2.0x · 剩余 4:30',
     })
     expect(progressView({ id: 1, out_time_s: 5, percent: null }).percent).toBeNull()
+    expect(progressView({ id: 1, out_time_s: 0, percent: 30, predict: { sample: 2, samples: 5, percent: 30 } })).toEqual({
+      percent: 30,
+      text: '预判收益中 · 样片 2/5',
+    })
   })
 
   it('summarises outcomes', () => {
@@ -56,6 +60,11 @@ describe('format', () => {
       report: report(),
     }
     expect(outcomeSummary(task(1, { state: 'insufficient_savings', outcome: low }))).toBe('只节省 3.2%，低于 5%，保留源片')
+    const estimate = { samples: 5, sample_secs: 40, video_ratio: 1.2, source_size: 100, estimated_size: 112, saved_pct: -12, secs: 30 }
+    const predicted: Outcome = { outcome: 'predicted_no_gain', estimate, min_savings_pct: 5 }
+    expect(outcomeSummary(task(1, { state: 'insufficient_savings', outcome: predicted }))).toBe(
+      '预判只节省约 -12.0%，低于 5%，没有转码，保留源片',
+    )
 
     const hard = candidate(report([{ check: 'frames', severity: 'hard', message: '帧数不同' }]))
     const rejected: Outcome = { outcome: 'rejected', candidate: hard }

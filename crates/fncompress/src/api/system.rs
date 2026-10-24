@@ -199,7 +199,7 @@ struct VerifyStats {
 
 fn report_of(outcome: &Outcome) -> Option<&Report> {
     match outcome {
-        Outcome::Skipped { .. } => None,
+        Outcome::Skipped { .. } | Outcome::PredictedNoGain { .. } => None,
         Outcome::Rejected { candidate } | Outcome::Verified { candidate } => {
             Some(&candidate.report)
         }

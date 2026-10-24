@@ -227,6 +227,7 @@ pub struct PacketAccumulator {
 #[derive(Default)]
 struct Acc {
     count: u64,
+    bytes: u64,
     empty: u64,
     start: Option<i64>,
     end: Option<i64>,
@@ -281,6 +282,7 @@ impl PacketAccumulator {
         }
         let acc = self.stats.entry(index as u32).or_default();
         acc.count += 1;
+        acc.bytes += size.unwrap_or(0).max(0) as u64;
         if !acc.shown {
             if discard {
                 acc.lead_in += 1;
@@ -325,6 +327,7 @@ impl PacketAccumulator {
             };
             s.packets = Some(PacketStats {
                 count: acc.map_or(0, |a| a.count),
+                bytes: acc.map_or(0, |a| a.bytes),
                 empty: acc.map_or(0, |a| a.empty),
                 start_s: secs(acc.and_then(|a| a.start)),
                 end_s: secs(acc.and_then(|a| a.end)),
@@ -619,7 +622,7 @@ mod tests {
             ]
         );
         let a = info.streams[2].packets.as_ref().unwrap();
-        assert_eq!((a.count, a.empty), (2, 1));
+        assert_eq!((a.count, a.empty, a.bytes), (2, 1, 2));
         assert_eq!(a.start_s, Some(-0.023));
         assert_eq!(a.end_s, Some(0.023));
         assert!(a.checkpoints.is_empty());
@@ -631,18 +634,19 @@ mod tests {
         let mut info = parse_metadata(MKV, ID).unwrap();
         let mut acc = PacketAccumulator::new(&info.streams, Some(1));
         for line in [
-            "stream_index=1|pts=-80|dts=-120|duration=40|flags=KD_",
+            "stream_index=1|pts=-80|dts=-120|duration=40|size=500|flags=KD_",
             "stream_index=2|pts=-46|dts=-46|duration=23|size=300|flags=KD_",
             "stream_index=1|pts=-40|dts=-80|duration=40|flags=_D_",
-            "stream_index=1|pts=0|dts=-40|duration=40|flags=___",
+            "stream_index=1|pts=0|dts=-40|duration=40|size=700|flags=___",
             "stream_index=2|pts=-23|dts=-23|duration=23|size=300|flags=K__",
-            "stream_index=1|pts=40|dts=0|duration=40|flags=___",
+            "stream_index=1|pts=40|dts=0|duration=40|size=300|flags=___",
         ] {
             acc.push_line(line);
         }
         acc.finish(&mut info.streams);
         let v = info.streams[1].packets.as_ref().unwrap();
         assert_eq!((v.count, v.start_s, v.end_s), (2, Some(0.0), Some(0.08)));
+        assert_eq!(v.bytes, 1000);
         assert_eq!(v.lead_in, None);
         // Other streams keep their hidden lead-in, recorded as such.
         let a = info.streams[2].packets.as_ref().unwrap();

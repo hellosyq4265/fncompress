@@ -3,7 +3,7 @@
 import type { Finding, Report, Severity, Task } from '../api/types'
 import { formatDuration } from './format'
 
-/** Check ids from crates/core/src/verify.rs. */
+/** Check ids from crates/core/src/verify.rs (and the pipeline's notes). */
 export const CHECK_LABEL: Record<string, string> = {
   probe_depth: '探测深度',
   stream_layout: '轨道布局',
@@ -27,6 +27,7 @@ export const CHECK_LABEL: Record<string, string> = {
   hdr_metadata: 'HDR 元数据',
   dovi_rpu: '杜比视界 RPU',
   dolby_vision: '杜比视界',
+  predict_savings: '预判收益',
   marker: '已处理标记',
   stream_tags: '轨道标签',
   global_tags: '全局标签',
@@ -59,6 +60,7 @@ export function reportOf(t: Task): Report | null {
   if (!o) return t.candidate?.report ?? null
   switch (o.outcome) {
     case 'skipped':
+    case 'predicted_no_gain':
       return null
     case 'rejected':
     case 'verified':

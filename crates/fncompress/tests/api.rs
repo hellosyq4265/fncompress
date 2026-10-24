@@ -438,6 +438,20 @@ async fn folder_batch_observation_and_release() {
     assert_eq!(second["skipped"][0]["code"], "already_processed");
 }
 
+/// The front end tells a quiet stream from one a proxy holds back by these.
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_event_streams_ping() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = server(None, dir.path()).await;
+    let mut events = subscribe(&s.router()).await;
+    expect_event(&mut events, |e, _| e == "ready").await;
+    let (event, _) = tokio::time::timeout(Duration::from_secs(8), events.recv())
+        .await
+        .expect("an event within 8 s")
+        .expect("stream open");
+    assert_eq!(event, "ping");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_ends_event_streams() {
     let dir = tempfile::tempdir().unwrap();

@@ -11,7 +11,9 @@ use fncompress::{
     db::now,
     db::TaskFilter,
     janitor,
-    model::{SavedProfile, ServerSettings, Task, TaskSource, TaskState},
+    model::{
+        AttemptKind, PendingReason, SavedProfile, ServerSettings, Task, TaskSource, TaskState,
+    },
     server::{ServeOptions, Server},
 };
 
@@ -252,6 +254,59 @@ async fn monitor_pauses_while_space_is_short() {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     s.stop().await;
+}
+
+/// Older versions held a rejected output for review even when it saved too
+/// little; the janitor ends such tasks as 收益不足.
+#[tokio::test(flavor = "multi_thread")]
+async fn janitor_closes_pending_outputs_that_save_too_little() {
+    let tools = require_tools!();
+    let h = common::harness(&tools, common::plain(), |g| g.verify.ssim_hard = 1.01);
+    let a = h.dir.path().join("media/a.mkv");
+    common::sample(&tools, &a, 2);
+    let t = h
+        .app
+        .submit_manual(&fncompress::app::ManualRequest {
+            path: a.clone(),
+            profile_id: None,
+            force: false,
+        })
+        .unwrap();
+    let pending = common::settled(&h.app, t.id).await;
+    assert_eq!(pending.state, TaskState::Pending, "{pending:?}");
+    // A pending output that saves enough stays.
+    assert_eq!(janitor::sweep(&h.app, now()), janitor::Sweep::default());
+
+    // What an older version left: the same output saving 1%.
+    let mut candidate = pending.candidate.clone().unwrap();
+    candidate.savings.saved_pct = 1.0;
+    h.app
+        .db
+        .mark_pending(
+            t.id,
+            pending.outcome.as_ref().unwrap(),
+            &candidate,
+            PendingReason::Rejected,
+            pending.pending_until.unwrap(),
+        )
+        .unwrap();
+    let swept = janitor::sweep(&h.app, now());
+    assert_eq!(swept.insufficient_pending, [t.id]);
+    assert!(!candidate.path.exists());
+    assert!(a.exists());
+    let closed = h.app.task(t.id).unwrap();
+    assert_eq!(closed.state, TaskState::InsufficientSavings);
+    assert!(matches!(
+        closed.outcome,
+        Some(fncompress_core::pipeline::Outcome::InsufficientSavings { .. })
+    ));
+    let attempt = &h.app.db.attempts(None, 10).unwrap()[0];
+    assert_eq!(attempt.kind, AttemptKind::InsufficientSavings);
+    assert!(
+        attempt.message.contains("校验未通过"),
+        "{}",
+        attempt.message
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

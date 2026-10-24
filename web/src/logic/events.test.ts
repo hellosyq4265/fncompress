@@ -20,37 +20,66 @@ class FakeSource implements EventSourceLike {
     const ev = { data: typeof data === 'string' ? data : JSON.stringify(data) } as MessageEvent
     this.listeners.get(type)?.forEach((f) => f(ev))
   }
-  fail(closed: boolean) {
-    this.readyState = closed ? 2 : 0
+  fail() {
     this.onerror?.(new Event('error'))
   }
 }
 
+/** Defaults: ready within 5 s, quiet 20 s, retest after 120 s, polls every 4 s. */
 function setup() {
   const sources: FakeSource[] = []
   const events: ServerEvent[] = []
   const states: ConnectionState[] = []
-  const timers: (() => void)[] = []
+  const timers = new Map<number, { fn: () => void; ms: number }>()
+  let next = 0
   let resyncs = 0
+  let polls = 0
   const stop = connectEvents(
-    { event: (e) => events.push(e), resync: () => resyncs++, state: (s) => states.push(s) },
+    {
+      event: (e) => events.push(e),
+      resync: () => resyncs++,
+      state: (s) => states.push(s),
+      poll: () => polls++,
+    },
     {
       create: (url) => {
         const s = new FakeSource(url)
         sources.push(s)
         return s
       },
-      setTimer: (fn) => timers.push(fn),
-      clearTimer: () => {},
+      pollMs: 4000,
+      setTimer: (fn, ms) => {
+        timers.set(++next, { fn, ms })
+        return next
+      },
+      clearTimer: (id) => timers.delete(id as number),
     },
   )
-  return { sources, events, states, timers, stop, resyncs: () => resyncs }
+  /** Runs the pending timer of `ms` (it must exist). */
+  const fire = (ms: number) => {
+    const hit = [...timers].find(([, t]) => t.ms === ms)
+    if (!hit) throw new Error(`no ${ms} ms timer; pending: ${[...timers.values()].map((t) => t.ms)}`)
+    timers.delete(hit[0])
+    hit[1].fn()
+  }
+  const pending = () => [...timers.values()].map((t) => t.ms).sort((a, b) => a - b)
+  return {
+    sources,
+    events,
+    states,
+    stop,
+    fire,
+    pending,
+    last: () => sources[sources.length - 1],
+    resyncs: () => resyncs,
+    polls: () => polls,
+  }
 }
 
 describe('connectEvents', () => {
   it('reloads on ready and lagged, and forwards events', () => {
     const t = setup()
-    const s = t.sources[0]
+    const s = t.last()
     expect(s.url).toBe('api/events')
     expect(t.states).toEqual(['connecting'])
     s.emit('ready', {})
@@ -63,79 +92,83 @@ describe('connectEvents', () => {
     expect(t.resyncs()).toBe(2)
   })
 
-  it('lets the browser retry, and reopens a stream the browser closed', () => {
+  it('reopens a failed stream itself, polling meanwhile', () => {
     const t = setup()
-    t.sources[0].fail(false)
+    t.last().emit('ready', {})
+    t.last().fail()
     expect(t.states.at(-1)).toBe('reconnecting')
-    expect(t.timers).toHaveLength(0)
-    t.sources[0].fail(true)
     expect(t.sources[0].closed).toBe(true)
-    expect(t.timers).toHaveLength(1)
-    t.timers[0]()
+    // Retry after 3 s; polling would start at 5 s.
+    expect(t.pending()).toEqual([3000, 5000])
+    t.fire(3000)
     expect(t.sources).toHaveLength(2)
-    t.sources[1].emit('ready', {})
-    expect(t.resyncs()).toBe(1)
+    t.last().emit('ready', {})
     expect(t.states.at(-1)).toBe('open')
+    expect(t.resyncs()).toBe(2)
+    expect(t.polls()).toBe(0)
+    // Only the quiet watchdog is left.
+    expect(t.pending()).toEqual([20000])
   })
 
-  it('polls while ready does not come, and stops once it does', () => {
-    const sources: FakeSource[] = []
-    const states: ConnectionState[] = []
-    const timers = new Map<number, { fn: () => void; ms: number }>()
-    let next = 0
-    let polls = 0
-    const fire = () => {
-      const [id, t] = [...timers][0]
-      timers.delete(id)
-      t.fn()
-      return t.ms
-    }
-    const stop = connectEvents(
-      { event: () => {}, resync: () => {}, state: (s) => states.push(s), poll: () => polls++ },
-      {
-        create: (url) => {
-          const s = new FakeSource(url)
-          sources.push(s)
-          return s
-        },
-        pollAfterMs: 5000,
-        pollMs: 4000,
-        setTimer: (fn, ms) => {
-          timers.set(++next, { fn, ms })
-          return next
-        },
-        clearTimer: (id) => timers.delete(id as number),
-      },
-    )
-    // A buffering proxy: the stream is open but nothing arrives.
-    expect(states).toEqual(['connecting'])
-    expect(fire()).toBe(5000)
-    expect(polls).toBe(1)
-    expect(states).toEqual(['connecting', 'polling'])
-    expect(fire()).toBe(4000)
-    expect(polls).toBe(2)
-    // The browser retries meanwhile: still shown as polling, one poll timer.
-    sources[0].fail(false)
-    expect(states.at(-1)).toBe('polling')
-    expect(timers.size).toBe(1)
-    // The proxy finally lets it through.
-    sources[0].emit('ready', {})
-    expect(states.at(-1)).toBe('open')
-    expect(timers.size).toBe(0)
-    // Lost again: polling resumes after the delay.
-    sources[0].fail(false)
-    expect(states.at(-1)).toBe('reconnecting')
-    expect(fire()).toBe(5000)
-    expect(states.at(-1)).toBe('polling')
-    stop()
-    expect(timers.size).toBe(0)
+  it('polls instead of a stream held back by a proxy, and tries it again later', () => {
+    const t = setup()
+    // A buffering proxy: nothing arrives within 5 s.
+    t.fire(5000)
+    expect(t.states.at(-1)).toBe('polling')
+    expect(t.polls()).toBe(1)
+    expect(t.sources[0].closed).toBe(true)
+    expect(t.pending()).toEqual([4000, 120000])
+    t.fire(4000)
+    expect(t.polls()).toBe(2)
+    // The retest is held back too: still polling, never shown as live.
+    t.fire(120000)
+    expect(t.sources).toHaveLength(2)
+    t.fire(5000)
+    expect(t.sources[1].closed).toBe(true)
+    expect(t.states.every((s) => s !== 'open')).toBe(true)
+    // The proxy was fixed: the next retest is live and polling stops.
+    t.fire(120000)
+    t.last().emit('ready', {})
+    expect(t.states.at(-1)).toBe('open')
+    expect(t.pending()).toEqual([20000])
+  })
+
+  it('keeps polling when ready only comes in a late burst', () => {
+    const t = setup()
+    t.fire(5000)
+    expect(t.states.at(-1)).toBe('polling')
+    // The proxy's buffer fills: ready and a backlog arrive at once.
+    t.sources[0].emit('ready', {})
+    t.sources[0].emit('task_progress', { event: 'task_progress', id: 1 })
+    expect(t.states.at(-1)).toBe('polling')
+    expect(t.events).toEqual([])
+    expect(t.resyncs()).toBe(0)
+    t.fire(4000)
+    expect(t.polls()).toBe(2)
+  })
+
+  it('stays open while pings come, and reconnects when the stream goes silent', () => {
+    const t = setup()
+    t.last().emit('ready', {})
+    expect(t.pending()).toEqual([20000])
+    t.last().emit('ping', {})
+    t.last().emit('task_progress', { event: 'task_progress', id: 1 })
+    expect(t.pending()).toEqual([20000])
+    expect(t.states.at(-1)).toBe('open')
+    t.fire(20000)
+    expect(t.states.at(-1)).toBe('reconnecting')
+    expect(t.sources[0].closed).toBe(true)
+    t.fire(0)
+    expect(t.sources).toHaveLength(2)
+    t.last().emit('ready', {})
+    expect(t.states.at(-1)).toBe('open')
   })
 
   it('closes for good when stopped', () => {
     const t = setup()
+    t.last().fail()
     t.stop()
     expect(t.sources[0].closed).toBe(true)
-    t.sources[0].fail(true)
-    expect(t.timers).toHaveLength(0)
+    expect(t.pending()).toEqual([])
   })
 })

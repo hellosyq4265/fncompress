@@ -87,6 +87,8 @@ export interface ProfileForm {
   /** null: keep the source size. */
   maxHeight: number | null
   threads: number | null
+  /** 转码前预判收益. */
+  predictSavings: boolean
 }
 
 export function emptyProfileForm(): ProfileForm {
@@ -99,6 +101,7 @@ export function emptyProfileForm(): ProfileForm {
     container: 'keep',
     maxHeight: null,
     threads: null,
+    predictSavings: false,
   }
 }
 
@@ -113,6 +116,7 @@ export function profileToForm(p: SavedProfile): ProfileForm {
     container: p.profile.container,
     maxHeight: r === 'keep' ? null : r.max_height,
     threads: p.profile.threads,
+    predictSavings: p.profile.predict_savings,
   }
 }
 
@@ -127,6 +131,7 @@ export function formToProfile(f: ProfileForm): Profile {
     container: f.container,
     resize: f.maxHeight ? { max_height: f.maxHeight } : 'keep',
     threads: f.threads && f.threads > 0 ? f.threads : null,
+    predict_savings: f.predictSavings,
   }
 }
 
@@ -144,6 +149,7 @@ export function describeProfile(p: Profile): string[] {
   parts.push(p.container === 'keep' ? '保持原封装' : `转为 ${p.container.toUpperCase()}`)
   if (p.resize !== 'keep') parts.push(`最高 ${p.resize.max_height}p`)
   if (p.threads) parts.push(`${p.threads} 线程`)
+  if (p.predict_savings) parts.push('转码前预判收益')
   return parts
 }
 

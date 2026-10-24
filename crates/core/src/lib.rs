@@ -11,6 +11,7 @@ pub mod identity;
 pub mod inspect;
 pub mod marker;
 pub mod pipeline;
+pub mod predict;
 pub mod probe;
 pub mod publish;
 pub mod recommend;

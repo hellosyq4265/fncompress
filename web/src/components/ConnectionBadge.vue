@@ -11,7 +11,7 @@ const view = computed(() => {
       return {
         type: 'info' as const,
         text: '定时刷新',
-        tip: '实时连接被中间的代理拦住了（例如路由器反向代理缓冲了响应），改为每 5 秒刷新一次；进度照常更新，只是不那么及时',
+        tip: '实时连接被中间的代理拦住了（例如路由器反向代理缓冲了响应），改为每 5 秒刷新一次，每 2 分钟再试一次实时连接；进度照常更新，只是不那么及时',
       }
     case 'connecting':
       return { type: 'info' as const, text: '连接中', tip: '正在连接 fncompress 服务' }

@@ -77,6 +77,14 @@ pub enum Verdict {
     Rejected,
 }
 
+/// A time in a finding, as a player's position bar shows it:
+/// 1234.5 → `0:20:34.5`. Times in reports count from the video start.
+pub fn clock(secs: f64) -> String {
+    let tenths = (secs.max(0.0) * 10.0).round() as u64;
+    let (h, m, s) = (tenths / 36_000, tenths / 600 % 60, tenths % 600);
+    format!("{h}:{m:02}:{:02}.{}", s / 10, s % 10)
+}
+
 pub fn verdict(findings: &[Finding]) -> Verdict {
     if findings.iter().any(|f| f.severity == Severity::Hard) {
         Verdict::Rejected
@@ -376,7 +384,7 @@ fn check_inspection(f: &mut Findings, t: &VerifyThresholds, i: &Inspection) {
         .flatten()
         .min_by(|a, b| a.ssim.total_cmp(&b.ssim))
     {
-        let what = format!("{:.1}s 处画面抽检 SSIM {:.3}", worst.at_s, worst.ssim);
+        let what = format!("{} 处画面抽检 SSIM {:.3}", clock(worst.at_s), worst.ssim);
         if worst.ssim < t.ssim_hard {
             f.hard(
                 "spot_check_ssim",
@@ -517,7 +525,7 @@ fn check_streams(
                 delta,
                 t.end_soft_ms,
                 t.end_hard_ms,
-                &format!("第 {n} 条流的结束时间"),
+                &format!("第 {n} 条流的结束时间（原片 {}）", clock(ea - oa)),
             );
         }
     }
@@ -699,16 +707,23 @@ fn check_timeline(f: &mut Findings, a: &StreamInfo, b: &StreamInfo, va: &VideoPa
         .iter()
         .zip(&pb.checkpoints)
         .filter(|(x, y)| x.frame == y.frame)
-        .map(|(x, y)| (x.frame, ((y.pts_s - sb) - (x.pts_s - sa)).abs()))
-        .max_by(|x, y| x.1.total_cmp(&y.1));
-    if let Some((frame, shift)) = worst {
+        .map(|(x, y)| {
+            (
+                x.frame,
+                x.pts_s - sa,
+                ((y.pts_s - sb) - (x.pts_s - sa)).abs(),
+            )
+        })
+        .max_by(|x, y| x.2.total_cmp(&y.2));
+    if let Some((frame, at, shift)) = worst {
         // Rounding between time bases is far below a frame; the epsilon
         // only absorbs float noise.
         if shift > frame_s + 1e-6 {
             f.soft(
                 "timeline",
                 format!(
-                    "第 {frame} 帧的显示时间偏移 {:.1} ms，超过 1 帧（{:.1} ms）",
+                    "第 {frame} 帧（{}）的显示时间偏移 {:.1} ms，超过 1 帧（{:.1} ms）",
+                    clock(at),
                     shift * 1000.0,
                     frame_s * 1000.0
                 ),
@@ -1027,6 +1042,7 @@ mod tests {
             side_data: BTreeSet::new(),
             packets: Some(PacketStats {
                 count,
+                bytes: 0,
                 empty: 0,
                 start_s: Some(start),
                 end_s: Some(end),
@@ -1198,6 +1214,15 @@ mod tests {
     }
 
     #[test]
+    fn times_read_like_a_position_bar() {
+        assert_eq!(clock(1234.5), "0:20:34.5");
+        assert_eq!(clock(0.04), "0:00:00.0");
+        assert_eq!(clock(59.96), "0:01:00.0");
+        assert_eq!(clock(7322.25), "2:02:02.3");
+        assert_eq!(clock(-1.0), "0:00:00.0");
+    }
+
+    #[test]
     fn container_duration_is_never_judged() {
         let mut out = candidate();
         out.format.duration_s = Some(75.0);
@@ -1210,6 +1235,7 @@ mod tests {
             codec_tag: Some("text".into()),
             packets: Some(PacketStats {
                 count: 0,
+                bytes: 0,
                 empty: 0,
                 start_s: None,
                 end_s: None,

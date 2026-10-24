@@ -15,7 +15,7 @@ use crate::{
     route::RoutePlan,
     settings::SettingsSnapshot,
     tool::{self, CancelToken, ToolError},
-    verify::{DecodeResult, Inspection, RpuCheck, SpotCheck, StreamHash},
+    verify::{self, DecodeResult, Inspection, RpuCheck, SpotCheck, StreamHash},
 };
 
 /// Spot checks stay clear of the first and last 5% (logos, credits, black).
@@ -415,7 +415,7 @@ fn spot_checks(
         if frames == 0 {
             return Err(ToolError::Unexpected {
                 program: "ffmpeg ssim".into(),
-                message: format!("{at:.1}s 处没有可比较的帧"),
+                message: format!("{} 处没有可比较的帧", verify::clock(at)),
             });
         }
         points.push(SpotCheck {

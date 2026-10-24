@@ -160,6 +160,64 @@ fn mp4_at_24_fps_into_mkv_decodes_cleanly() {
     );
 }
 
+/// A Matroska 23.976 fps source whose DefaultDuration says 42 ms: FFmpeg
+/// reads the frame rate as 500/21, and an encoder timed in 1/frame-rate
+/// ticks puts the millisecond timestamps on a 42 ms grid, where two frames
+/// every ~6 s land on one pts. The candidate must keep the source's pts.
+#[test]
+fn mkv_with_a_rounded_frame_rate_keeps_every_pts() {
+    let tools = require_tools!();
+    let dir = tempfile::tempdir().unwrap();
+    let plain = dir.path().join("plain.mkv");
+    common::ffmpeg(
+        &tools,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=320x180:r=24000/1001:d=8",
+            "-c:v",
+            "libx264",
+            "-g",
+            "24",
+            plain.to_str().unwrap(),
+        ],
+    );
+    let src = dir.path().join("a.mkv");
+    common::ffmpeg(
+        &tools,
+        &[
+            "-i",
+            plain.to_str().unwrap(),
+            "-c",
+            "copy",
+            "-r",
+            "500/21",
+            src.to_str().unwrap(),
+        ],
+    );
+    let frame_pts = |path: &Path| {
+        let out = std::process::Command::new(&tools.ffprobe)
+            .args(["-v", "error", "-select_streams", "v:0"])
+            .args(["-show_entries", "packet=pts", "-of", "csv=p=0"])
+            .arg(path)
+            .output()
+            .unwrap();
+        let mut pts: Vec<i64> = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(|l| l.trim().parse().unwrap())
+            .collect();
+        pts.sort_unstable();
+        pts
+    };
+    let before = frame_pts(&src);
+    let c = verified(run(&tools, &snapshot(&tools, ContainerChoice::Keep), &src));
+    let decode = c.report.inspection.decode.as_ref().unwrap();
+    assert!(decode.errors.is_empty(), "{:?}", decode.errors);
+    assert_eq!(frame_pts(&c.path), before);
+}
+
 /// An MP4 cut with stream copy starts at the keyframe before the cut and
 /// hides the frames up to it with an edit list (packets flagged discard):
 /// 2 s of video and about 1 s of audio here.

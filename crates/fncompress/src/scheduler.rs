@@ -21,12 +21,15 @@ use fncompress_core::{
     command::Progress,
     encoder::{Encoder, Quota},
     identity::FileIdentity,
-    pipeline::{self, Job, Outcome, PipelineError},
+    pipeline::{self, Job, JobProgress, Outcome, PipelineError},
+    predict::PredictProgress,
     probe::{ProbeDepth, Prober},
+    publish::Savings,
     recommend::{self, RecommendError, RecommendJob, RecommendOutcome, RecommendProgress},
     recycle,
     route::SkipCode,
     tool::CancelToken,
+    verify::{Report, Severity, Verdict},
 };
 use tokio::sync::Notify;
 
@@ -386,21 +389,32 @@ impl Inner {
             cancel: Some(cancel),
         };
         let mut duration = None;
-        let mut last: Option<Instant> = None;
-        let outcome = pipeline::transcode_file(&prober, &job, |p: Progress| {
-            if last.is_some_and(|t| t.elapsed() < PROGRESS_EVERY) {
+        // When the last report went out, and for which prediction sample
+        // (`None`: the encode). A new step is reported at once.
+        let mut last: Option<(Instant, Option<u32>)> = None;
+        let outcome = pipeline::transcode_file(&prober, &job, |p: JobProgress| {
+            let step = match p {
+                JobProgress::Predicting(q) => Some(q.sample),
+                JobProgress::Encoding(_) => None,
+            };
+            if last.is_some_and(|(t, s)| s == step && t.elapsed() < PROGRESS_EVERY) {
                 return;
             }
-            last = Some(Instant::now());
-            // The full probe has just been cached; this is a lookup.
-            if duration.is_none() {
-                duration = prober
-                    .cache
-                    .as_ref()
-                    .and_then(|c| c.get(&identity, ProbeDepth::Quick))
-                    .and_then(|i| i.format.duration_s);
+            last = Some((Instant::now(), step));
+            match p {
+                JobProgress::Predicting(q) => self.report_prediction(task.id, q),
+                JobProgress::Encoding(p) => {
+                    // The full probe has just been cached; this is a lookup.
+                    if duration.is_none() {
+                        duration = prober
+                            .cache
+                            .as_ref()
+                            .and_then(|c| c.get(&identity, ProbeDepth::Quick))
+                            .and_then(|i| i.format.duration_s);
+                    }
+                    self.report_progress(task.id, p, duration);
+                }
             }
-            self.report_progress(task.id, p, duration);
         })
         .map_err(TaskError::Pipeline)?;
         Ok((identity, outcome))
@@ -416,8 +430,25 @@ impl Inner {
                 .map(|d| (p.out_time_s / d * 100.0).clamp(0.0, 100.0)),
             speed: p.speed,
             recommend: None,
+            predict: None,
         };
-        if let Some(r) = self.lock().get_mut(&id) {
+        self.send_progress(progress);
+    }
+
+    fn report_prediction(&self, id: i64, p: PredictProgress) {
+        self.send_progress(TaskProgress {
+            id,
+            out_time_s: 0.0,
+            duration_s: None,
+            percent: Some(p.percent),
+            speed: None,
+            recommend: None,
+            predict: Some(p),
+        });
+    }
+
+    fn send_progress(&self, progress: TaskProgress) {
+        if let Some(r) = self.lock().get_mut(&progress.id) {
             r.progress = Some(progress);
         }
         self.events.send(Event::TaskProgress(progress));
@@ -470,17 +501,10 @@ impl Inner {
                 db.finish_task(id, TaskState::Skipped, Some(&outcome), None)
             }
             Outcome::Rejected { candidate } => {
-                let hard: Vec<_> = candidate
-                    .report
-                    .findings
-                    .iter()
-                    .filter(|f| f.severity == fncompress_core::verify::Severity::Hard)
-                    .map(|f| f.message.as_str())
-                    .collect();
                 attempt(
                     AttemptKind::Rejected,
                     None,
-                    &format!("校验未通过：{}", hard.join("；")),
+                    &rejected_message(&candidate.report),
                 )?;
                 if task.observe {
                     db.bump_observed_count()?;
@@ -496,14 +520,25 @@ impl Inner {
             Outcome::InsufficientSavings {
                 savings,
                 min_savings_pct,
-                ..
+                report,
             } => {
                 attempt(
                     AttemptKind::InsufficientSavings,
                     None,
+                    &insufficient_message(savings, *min_savings_pct, report),
+                )?;
+                db.finish_task(id, TaskState::InsufficientSavings, Some(&outcome), None)
+            }
+            Outcome::PredictedNoGain {
+                estimate,
+                min_savings_pct,
+            } => {
+                attempt(
+                    AttemptKind::PredictedNoGain,
+                    None,
                     &format!(
-                        "收益不足：节省 {:.1}%（需要 {min_savings_pct}%）",
-                        savings.saved_pct
+                        "预判收益不足：估算节省 {:.1}%（需要 {min_savings_pct}%）",
+                        estimate.saved_pct
                     ),
                 )?;
                 db.finish_task(id, TaskState::InsufficientSavings, Some(&outcome), None)
@@ -524,6 +559,31 @@ impl Inner {
             }
         }
     }
+}
+
+/// The attempt message of a rejected candidate: its hard findings.
+pub fn rejected_message(report: &Report) -> String {
+    let hard: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.severity == Severity::Hard)
+        .map(|f| f.message.as_str())
+        .collect();
+    format!("校验未通过：{}", hard.join("；"))
+}
+
+/// The attempt message of 收益不足, with the hard findings when the
+/// candidate failed the checks as well.
+pub fn insufficient_message(savings: &Savings, min_savings_pct: f64, report: &Report) -> String {
+    let mut message = format!(
+        "收益不足：节省 {:.1}%（需要 {min_savings_pct}%）",
+        savings.saved_pct
+    );
+    if report.verdict == Verdict::Rejected {
+        message.push('；');
+        message.push_str(&rejected_message(report));
+    }
+    message
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -574,11 +634,9 @@ impl Inner {
                     percent: Some(p.percent),
                     speed: None,
                     recommend: Some(p),
+                    predict: None,
                 };
-                if let Some(r) = self.lock().get_mut(&id) {
-                    r.progress = Some(progress);
-                }
-                self.events.send(Event::TaskProgress(progress));
+                self.send_progress(progress);
             },
             |rec| match self.db.set_recommendation(id, Some(rec)) {
                 Ok(()) => {

@@ -25,6 +25,7 @@ const saved: SavedProfile = {
     container: 'mkv',
     resize: { max_height: 1080 },
     threads: 4,
+    predict_savings: true,
   },
 }
 
@@ -44,6 +45,7 @@ describe('profile form', () => {
   it('round-trips a saved profile', () => {
     const f = profileToForm(saved)
     expect(f.maxHeight).toBe(1080)
+    expect(f.predictSavings).toBe(true)
     expect(formToProfile(f)).toEqual(saved.profile)
   })
 
@@ -61,8 +63,10 @@ describe('profile form', () => {
   })
 
   it('describes a profile in one line', () => {
-    expect(describeProfile(saved.profile)).toEqual(['质量 20', '预设 slow', '转为 MKV', '最高 1080p', '4 线程'])
-    expect(describeProfile({ ...saved.profile, preset: null, container: 'keep', resize: 'keep', threads: null })).toEqual([
+    expect(describeProfile(saved.profile)).toEqual(['质量 20', '预设 slow', '转为 MKV', '最高 1080p', '4 线程', '转码前预判收益'])
+    expect(
+      describeProfile({ ...saved.profile, preset: null, container: 'keep', resize: 'keep', threads: null, predict_savings: false }),
+    ).toEqual([
       '质量 20',
       '预设 medium',
       '保持原封装',

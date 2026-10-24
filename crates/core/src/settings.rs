@@ -16,7 +16,9 @@ use crate::encoder::Encoder;
 /// 5: Into Matroska, the lead-in an MP4 edit list hides is dropped.
 /// 6: MP4/MOV chapter tracks are left out and their chapters copied as
 ///    chapters; such files were skipped before.
-pub const COMMAND_REVISION: u32 = 6;
+/// 7: The encoder keeps the source's time base (`-enc_time_base demux`);
+///    rounded Matroska frame rates gave frames duplicate pts.
+pub const COMMAND_REVISION: u32 = 7;
 
 /// Output container choice of a profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -56,6 +58,10 @@ pub struct Profile {
     pub resize: Resize,
     /// Encoder thread limit; `None` lets FFmpeg decide. Does not affect output.
     pub threads: Option<u32>,
+    /// 转码前预判收益: encode a few samples first and skip the transcode
+    /// when the estimated saving is well below `min_savings_pct` (see
+    /// [`crate::predict`]). Does not affect output.
+    pub predict_savings: bool,
 }
 
 impl Default for Profile {
@@ -68,6 +74,7 @@ impl Default for Profile {
             container: ContainerChoice::Keep,
             resize: Resize::Keep,
             threads: None,
+            predict_savings: false,
         }
     }
 }
@@ -89,7 +96,7 @@ impl Profile {
     }
 
     /// Settings fingerprint (设置指纹): a stable hash of the fields that change
-    /// the output. The id and thread count do not.
+    /// the output. The id, thread count and savings prediction do not.
     pub fn fingerprint(&self) -> String {
         let canonical = serde_json::json!({
             "rev": COMMAND_REVISION,
@@ -290,6 +297,7 @@ mod tests {
         let renamed = Profile {
             id: "other".into(),
             threads: Some(4),
+            predict_savings: true,
             ..base.clone()
         };
         assert_eq!(renamed.fingerprint(), fp);
@@ -330,5 +338,5 @@ mod tests {
         assert_eq!(Profile::default().fingerprint(), FINGERPRINT_OF_DEFAULT);
     }
 
-    const FINGERPRINT_OF_DEFAULT: &str = "fce7d09c15c396e0";
+    const FINGERPRINT_OF_DEFAULT: &str = "fce4d49c15c167d5";
 }

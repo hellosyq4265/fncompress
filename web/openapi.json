@@ -7,7 +7,7 @@
       "name": "LicenseRef-PolyForm-Noncommercial-1.0.0",
       "identifier": "LicenseRef-PolyForm-Noncommercial-1.0.0"
     },
-    "version": "0.1.1"
+    "version": "0.1.2"
   },
   "paths": {
     "/api/attempts": {
@@ -90,7 +90,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Server-sent events. Each SSE `event:` name equals the payload's `event`\nfield (see the `Event` schema): `task_created`, `task_updated`,\n`task_deleted`, `batch_created`, `scan_progress`, `task_progress`,\n`config_changed`, `monitor_status`, `space_status`.\n`ready` is sent first; `lagged` means events were dropped and the client\nshould reload what it shows.",
+        "summary": "Server-sent events. Each SSE `event:` name equals the payload's `event`\nfield (see the `Event` schema): `task_created`, `task_updated`,\n`task_deleted`, `batch_created`, `scan_progress`, `task_progress`,\n`config_changed`, `monitor_status`, `space_status`.\n`ready` is sent first; `lagged` means events were dropped and the client\nshould reload what it shows; `ping` (data `{}`) comes every 5 s while\nnothing else does, so the client can tell a quiet stream from a stuck one.",
         "description": "`X-Accel-Buffering: no` stops nginx in front (the fnOS gateway, ADR\n0012, buffers proxied responses by default) from holding events back.",
         "operationId": "events",
         "responses": {
@@ -1408,7 +1408,8 @@
         "enum": [
           "skipped",
           "rejected",
-          "insufficient_savings"
+          "insufficient_savings",
+          "predicted_no_gain"
         ]
       },
       "AttemptList": {
@@ -1955,6 +1956,57 @@
         "properties": {
           "error": {
             "$ref": "#/components/schemas/AppError"
+          }
+        }
+      },
+      "Estimate": {
+        "type": "object",
+        "description": "The estimated output of a transcode.",
+        "required": [
+          "samples",
+          "sample_secs",
+          "video_ratio",
+          "source_size",
+          "estimated_size",
+          "saved_pct",
+          "secs"
+        ],
+        "properties": {
+          "estimated_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "sample_secs": {
+            "type": "number",
+            "format": "double",
+            "description": "Their total length, seconds."
+          },
+          "samples": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Samples encoded.",
+            "minimum": 0
+          },
+          "saved_pct": {
+            "type": "number",
+            "format": "double",
+            "description": "Estimated saving relative to the source, in percent."
+          },
+          "secs": {
+            "type": "number",
+            "format": "double",
+            "description": "Wall time the estimate took, seconds."
+          },
+          "source_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "video_ratio": {
+            "type": "number",
+            "format": "double",
+            "description": "Trial video bytes over sample video bytes."
           }
         }
       },
@@ -2672,7 +2724,31 @@
           },
           {
             "type": "object",
-            "description": "Saved less than the threshold (收益不足); the source stays.",
+            "description": "预判无收益: the savings prediction put the saving well below the\nthreshold, so nothing but its samples was encoded; the source stays.",
+            "required": [
+              "estimate",
+              "min_savings_pct",
+              "outcome"
+            ],
+            "properties": {
+              "estimate": {
+                "$ref": "#/components/schemas/Estimate"
+              },
+              "min_savings_pct": {
+                "type": "number",
+                "format": "double"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "predicted_no_gain"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Saved less than the threshold (收益不足), whatever the verdict in\n`report`; the candidate is gone and the source stays.",
             "required": [
               "savings",
               "min_savings_pct",
@@ -2752,6 +2828,32 @@
           "rejected",
           "observation"
         ]
+      },
+      "PredictProgress": {
+        "type": "object",
+        "description": "Progress of an estimate.",
+        "required": [
+          "sample",
+          "samples",
+          "percent"
+        ],
+        "properties": {
+          "percent": {
+            "type": "number",
+            "format": "double"
+          },
+          "sample": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based sample being encoded.",
+            "minimum": 0
+          },
+          "samples": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "PresetResult": {
         "type": "object",
@@ -2950,6 +3052,11 @@
             "type": "string",
             "description": "Written into the processed marker.",
             "default": "default"
+          },
+          "predict_savings": {
+            "type": "boolean",
+            "description": "转码前预判收益: encode a few samples first and skip the transcode\nwhen the estimated saving is well below `min_savings_pct` (see\n[`crate::predict`]). Does not affect output.",
+            "default": false
           },
           "preset": {
             "type": [
@@ -3994,6 +4101,7 @@
               "container": "keep",
               "encoder": "libx265",
               "id": "default",
+              "predict_savings": false,
               "preset": null,
               "quality": 24,
               "resize": "keep",
@@ -4495,6 +4603,17 @@
               "null"
             ],
             "format": "double"
+          },
+          "predict": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PredictProgress",
+                "description": "转码前预判收益: the sample being encoded. `None` once the transcode\nitself runs."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "recommend": {
             "oneOf": [

@@ -170,6 +170,50 @@ async fn attempt_records_stop_repeats_until_asked() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn predicted_no_gain_is_recorded_and_a_retry_transcodes_in_full() {
+    let tools = require_tools!();
+    // Nothing saves 99%: the estimate falls short before the film is encoded.
+    let h = common::harness(&tools, common::plain(), |g| g.min_savings_pct = 99.0);
+    let mut profile = h.app.db.profile("default").unwrap().unwrap();
+    profile.profile.predict_savings = true;
+    h.app.db.put_profile(&profile).unwrap();
+    // Long enough for an estimate.
+    let src = h.dir.path().join("media/long.mkv");
+    common::sample(&tools, &src, 420);
+
+    let task = h.app.submit_manual(&manual(&src)).unwrap();
+    let done = common::settled(&h.app, task.id).await;
+    assert_eq!(done.state, TaskState::InsufficientSavings, "{done:?}");
+    let Some(Outcome::PredictedNoGain { estimate, .. }) = &done.outcome else {
+        panic!("{done:?}");
+    };
+    assert!(estimate.saved_pct < 94.0, "{estimate:?}");
+    let attempt = &h.app.db.attempts(None, 10).unwrap()[0];
+    assert_eq!(attempt.kind, AttemptKind::PredictedNoGain);
+    assert!(
+        attempt.message.starts_with("预判收益不足"),
+        "{}",
+        attempt.message
+    );
+
+    // A retry skips the prediction: the whole film is encoded and measured.
+    let retry = h.app.retry(task.id).unwrap();
+    assert!(!retry.snapshot.profile.predict_savings);
+    let again = common::settled(&h.app, retry.id).await;
+    assert!(
+        matches!(again.outcome, Some(Outcome::InsufficientSavings { .. })),
+        "{again:?}"
+    );
+    let attempts = h.app.db.attempts(None, 10).unwrap();
+    assert_eq!(
+        attempts.len(),
+        1,
+        "the same file and fingerprint: one record"
+    );
+    assert_eq!(attempts[0].kind, AttemptKind::InsufficientSavings);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn observation_mode_holds_the_first_files_for_release() {
     let tools = require_tools!();
     let server = ServerSettings {
@@ -210,6 +254,41 @@ async fn observation_mode_holds_the_first_files_for_release() {
     assert!(matches!(released.outcome, Some(Outcome::Published { .. })));
     assert!(!candidate.path.exists());
     assert_eq!(h.app.release(ta.id).unwrap_err().code, "not_pending");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rejected_output_that_saves_too_little_is_not_held() {
+    let tools = require_tools!();
+    // Every spot check fails, and nothing saves 99%.
+    let h = common::harness(&tools, common::plain(), |g| {
+        g.verify.ssim_hard = 1.01;
+        g.min_savings_pct = 99.0;
+    });
+    let src = h.dir.path().join("media/a.mkv");
+    common::sample(&tools, &src, 2);
+
+    let t = h.app.submit_manual(&manual(&src)).unwrap();
+    let done = common::settled(&h.app, t.id).await;
+    assert_eq!(done.state, TaskState::InsufficientSavings, "{done:?}");
+    assert!(done.candidate.is_none());
+    let Some(Outcome::InsufficientSavings { report, .. }) = &done.outcome else {
+        panic!("{done:?}");
+    };
+    // The report keeps the verdict.
+    assert_eq!(report.verdict, fncompress_core::verify::Verdict::Rejected);
+    let leftovers: Vec<_> = std::fs::read_dir(src.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|n| n.to_string_lossy().contains(".fncompress-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    let attempt = &h.app.db.attempts(None, 10).unwrap()[0];
+    assert_eq!(attempt.kind, AttemptKind::InsufficientSavings);
+    assert!(
+        attempt.message.starts_with("收益不足") && attempt.message.contains("校验未通过"),
+        "{}",
+        attempt.message
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

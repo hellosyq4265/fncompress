@@ -132,6 +132,7 @@ export function progressView(p: TaskProgress | null | undefined, rec?: Recommend
   if (!p) return { percent: null, text: '准备中' }
   const percent = p.percent ?? null
   if (p.recommend) return { percent, text: stageText(p.recommend, rec) }
+  if (p.predict) return { percent, text: `预判收益中 · 样片 ${p.predict.sample}/${p.predict.samples}` }
   const parts = [p.duration_s ? `${formatDuration(p.out_time_s)} / ${formatDuration(p.duration_s)}` : formatDuration(p.out_time_s)]
   if (p.speed && p.speed > 0) {
     parts.push(`${p.speed.toFixed(p.speed >= 10 ? 0 : 1)}x`)
@@ -160,6 +161,8 @@ export function outcomeSummary(t: Task): string {
       return o.reason.message
     case 'insufficient_savings':
       return `只节省 ${formatPct(o.savings.saved_pct)}，低于 ${formatPct(o.min_savings_pct, 0)}，保留源片`
+    case 'predicted_no_gain':
+      return `预判只节省约 ${formatPct(o.estimate.saved_pct)}，低于 ${formatPct(o.min_savings_pct, 0)}，没有转码，保留源片`
     case 'published':
       return `${t.state === 'released' ? '已人工放行，' : ''}节省 ${formatPct(o.savings.saved_pct)}（${formatBytes(o.savings.source_size)} → ${formatBytes(o.savings.candidate_size)}）`
     case 'rejected':

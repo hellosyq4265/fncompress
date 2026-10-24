@@ -9,7 +9,7 @@ use fncompress_core::{
     caps, command,
     dovi::DoviTool,
     encoder::Encoder,
-    pipeline::{self, Candidate, Job, Outcome},
+    pipeline::{self, Candidate, Job, JobProgress, Outcome},
     probe::{DynamicRange, JsonDirCache, ProbeDepth, Prober},
     recommend::{
         self, AutoMethod, RecommendJob, RecommendOutcome, RecommendRequest, RecommendStage,
@@ -443,8 +443,15 @@ fn transcode(
     let outcome = pipeline::transcode_file(&prober, &job, |p| {
         if last.elapsed() >= Duration::from_secs(5) {
             last = Instant::now();
-            let speed = p.speed.map_or(String::new(), |s| format!(" ({s:.2}x)"));
-            eprintln!("进度 {:.1}s{speed}", p.out_time_s);
+            match p {
+                JobProgress::Predicting(p) => {
+                    eprintln!("预判收益：样片 {}/{}", p.sample, p.samples)
+                }
+                JobProgress::Encoding(p) => {
+                    let speed = p.speed.map_or(String::new(), |s| format!(" ({s:.2}x)"));
+                    eprintln!("进度 {:.1}s{speed}", p.out_time_s);
+                }
+            }
         }
     })?;
     eprintln!("用时 {:.1}s", started.elapsed().as_secs_f64());

@@ -308,8 +308,8 @@ impl Db {
         Ok(())
     }
 
-    /// pending → released/discarded/expired. The candidate is kept for the
-    /// record; false if the task was not pending.
+    /// pending → released/discarded/expired/insufficient_savings. The
+    /// candidate is kept for the record; false if the task was not pending.
     pub fn close_pending(
         &self,
         id: i64,
@@ -334,6 +334,16 @@ impl Db {
             params![id, name(&from), name(&to), finished],
         )?;
         Ok(n == 1)
+    }
+
+    /// Every pending output, oldest first.
+    pub fn pending_tasks(&self) -> Result<Vec<Task>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM tasks WHERE state = 'pending' ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([], row_to_task)?;
+        rows.collect()
     }
 
     /// Pending outputs whose retention ended before `at`.

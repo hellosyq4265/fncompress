@@ -23,7 +23,8 @@ pub fn routes() -> OpenApiRouter<ApiState> {
 /// `task_deleted`, `batch_created`, `scan_progress`, `task_progress`,
 /// `config_changed`, `monitor_status`, `space_status`.
 /// `ready` is sent first; `lagged` means events were dropped and the client
-/// should reload what it shows.
+/// should reload what it shows; `ping` (data `{}`) comes every 5 s while
+/// nothing else does, so the client can tell a quiet stream from a stuck one.
 ///
 /// `X-Accel-Buffering: no` stops nginx in front (the fnOS gateway, ADR
 /// 0012, buffers proxied responses by default) from holding events back.
@@ -48,7 +49,11 @@ async fn events(State(state): State<ApiState>) -> impl IntoResponse {
         let _ = shutdown.wait_for(|stopping| *stopping).await;
     };
     let sse = Sse::new(ready.chain(events).take_until(stop))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)));
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(5))
+                .event(SseEvent::default().event("ping").data("{}")),
+        );
     (
         [(
             HeaderName::from_static("x-accel-buffering"),

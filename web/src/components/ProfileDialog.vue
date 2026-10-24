@@ -13,6 +13,7 @@ import {
   NRadioGroup,
   NSelect,
   NSpace,
+  NSwitch,
   useDialog,
   useMessage,
 } from 'naive-ui'
@@ -183,6 +184,13 @@ async function save() {
           @update:value="(v: number) => (form.maxHeight = v || null)"
         />
       </NFormItem>
+      <NFormItem label="转码前预判收益">
+        <NSwitch v-model:value="form.predictSavings" />
+      </NFormItem>
+      <div class="hint">
+        正式转码前先试编几段样片估算成品大小，估算节省比收益门槛低 5 个百分点以上就不转，记为收益不足。
+        多花的时间约为整片编码的 1%–10%（片越短占比越高）；片长不到 7 分钟的直接转码。
+      </div>
       <NFormItem label="编码线程（可选）">
         <NInputNumber v-model:value="form.threads" :min="0" :max="64" clearable placeholder="由 FFmpeg 决定" style="width: 200px" />
       </NFormItem>
